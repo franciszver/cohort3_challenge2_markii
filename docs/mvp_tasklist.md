@@ -1,15 +1,15 @@
 # Task List (from PRD_MVP.md)
 
 ## 🟦 Epic 1: Authentication & User Profiles
-- [ ] Set up AWS Cognito User Pool for signup/login (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Configure Cognito Identity Pool for federated identities (if needed) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Implement signup/login UI in React Native (Expo Go)  
-- [ ] Store JWT tokens securely in AsyncStorage  
-- [ ] Create DynamoDB table for user profiles (userId, username, avatar, status) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Implement profile fetch/update API integration (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Display username + avatar in chat header  
-- [ ] **Emulator Test:** Run app, verify login/signup flow and profile display  
-- [ ] **Update `.gitignore` / `.cursorignore`:** Ensure no Cognito config secrets, `.env` files, or Amplify-generated files are committed.  
+- [x] Set up AWS Cognito User Pool for signup/login — email sign-in with email verification (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Configure Cognito Identity Pool (auth-only, no guest access; federated identities if needed) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Implement signup/login UI in React Native (Expo Go) — custom in-app UI (no Hosted UI)  
+- [x] Store JWT tokens securely in AsyncStorage  
+- [x] Create DynamoDB table for user profiles (userId, username, avatar, status) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Implement profile fetch/update API integration (AppSync GraphQL, Cognito User Pools auth) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Display username + avatar in chat header  
+- [x] **Emulator Test:** Run app, verify login/signup flow and profile display  
+- [x] **Update `.gitignore` / `.cursorignore`:** Ensure no Cognito config secrets, `.env` files, or Amplify-generated files are committed.  
 
 ---
 

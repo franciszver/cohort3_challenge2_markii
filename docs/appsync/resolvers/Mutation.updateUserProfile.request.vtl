@@ -1,0 +1,35 @@
+﻿#set($now = $util.time.nowISO8601())
+{
+  "version": "2018-05-29",
+  "operation": "UpdateItem",
+  "key": {
+    "userId": $util.dynamodb.toDynamoDBJson($ctx.identity.sub)
+  },
+  "update": {
+    "expression": "SET #username = if_not_exists(#username, :username), #avatar = :avatar, #status = :status, #updatedAt = :updatedAt, #createdAt = if_not_exists(#createdAt, :createdAt)",
+    "expressionNames": {
+      "#username": "username",
+      "#avatar": "avatar",
+      "#status": "status",
+      "#createdAt": "createdAt",
+      "#updatedAt": "updatedAt"
+    },
+    "expressionValues": {
+      ":username": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.username, $ctx.identity.username)),
+      ":avatar": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.avatar, null)),
+      ":status": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.status, null)),
+      ":createdAt": {"S": "$now"},
+      ":updatedAt": {"S": "$now"}
+    }
+  },
+  "condition": {
+    "expression": "attribute_not_exists(#username) OR #username = :username",
+    "expressionNames": {
+      "#username": "username"
+    },
+    "expressionValues": {
+      ":username": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.username, $ctx.identity.username))
+    }
+  },
+  "returnValues": "ALL_NEW"
+}
