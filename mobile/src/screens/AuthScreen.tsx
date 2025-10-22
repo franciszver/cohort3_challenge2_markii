@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Button } from 'react-native';
-import { signUp, confirmSignUp, signIn, fetchAuthSession, getCurrentUser } from 'aws-amplify/auth';
+import { signUp, confirmSignUp, signIn, fetchAuthSession, getCurrentUser, signOut } from 'aws-amplify/auth';
 import Constants from 'expo-constants';
 
 export default function AuthScreen({ navigation }: any) {
@@ -9,6 +9,7 @@ export default function AuthScreen({ navigation }: any) {
   const [code, setCode] = useState('');
   const [log, setLog] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [isSignedIn, setIsSignedIn] = useState<boolean>(false);
 
   const safe = (obj: any) => {
     try {
@@ -24,12 +25,26 @@ export default function AuthScreen({ navigation }: any) {
     setLog(prev => `${prev}${prev ? '\n' : ''}${line}`);
   };
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const user = await getCurrentUser();
+        appendLog('session detected for user', user);
+        setIsSignedIn(true);
+        navigation.replace('Home');
+      } catch {
+        setIsSignedIn(false);
+      }
+    })();
+  }, [navigation]);
+
   const onSignUp = async () => {
     setError(null);
     appendLog('signUp start', { email });
     try {
-      const res = await signUp({ username: email, password, options: { userAttributes: { email } } });
+      const res = await signUp({ username: email.trim(), password, options: { userAttributes: { email: email.trim() } } });
       appendLog('signUp success', res);
+      navigation.navigate('VerifyCode', { email: email.trim(), password });
     } catch (e: any) {
       appendLog('signUp error', { name: e?.name, message: e?.message, code: e?.code });
       setError(e?.message ?? 'Unknown sign up error');
@@ -77,19 +92,23 @@ export default function AuthScreen({ navigation }: any) {
 
   return (
     <View style={{ flex: 1, padding: 16 }}>
-      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Sign Up</Text>
+      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Welcome</Text>
       <TextInput placeholder="Email" autoCapitalize="none" value={email} onChangeText={setEmail} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <TextInput placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <Button title="Sign Up" onPress={onSignUp} />
+      <TextInput placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 16 }} />
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Button title="Sign In" onPress={onSignIn} disabled={isSignedIn} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Button title="Sign Up" onPress={onSignUp} />
+        </View>
+      </View>
 
-      <View style={{ height: 16 }} />
-      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Confirm Email</Text>
-      <TextInput placeholder="Code" value={code} onChangeText={setCode} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <Button title="Confirm Code" onPress={onConfirm} />
-
-      <View style={{ height: 16 }} />
-      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Sign In</Text>
-      <Button title="Sign In" onPress={onSignIn} />
+      {isSignedIn ? (
+        <View style={{ marginTop: 12 }}>
+          <Button title="Sign Out" onPress={async () => { await signOut(); setIsSignedIn(false); appendLog('signed out'); }} />
+        </View>
+      ) : null}
 
       {error ? (
         <Text style={{ color: 'red', marginTop: 12 }}>Error: {error}</Text>
