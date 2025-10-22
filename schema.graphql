@@ -1,0 +1,779 @@
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+type Conversation {
+  _deleted: Boolean
+  _lastChangedAt: AWSTimestamp!
+  _version: Int!
+  createdAt: AWSDateTime!
+  createdBy: String!
+  description: String
+  id: ID!
+  isGroup: Boolean!
+  lastMessage: String
+  lastMessageAt: AWSDateTime
+  lastMessageSender: String
+  name: String
+  participants: [String!]!
+  updatedAt: AWSDateTime!
+}
+
+type ConversationParticipant {
+  _deleted: Boolean
+  _lastChangedAt: AWSTimestamp!
+  _version: Int!
+  conversationId: String!
+  createdAt: AWSDateTime!
+  id: ID!
+  joinedAt: AWSDateTime!
+  lastReadAt: AWSDateTime
+  leftAt: AWSDateTime
+  notifications: Boolean
+  role: ConversationRole
+  unreadCount: Int
+  updatedAt: AWSDateTime!
+  userId: String!
+}
+
+type Message {
+  _deleted: Boolean
+  _lastChangedAt: AWSTimestamp!
+  _version: Int!
+  attachments: [String]
+  content: String!
+  conversationId: String!
+  createdAt: AWSDateTime!
+  deletedAt: AWSDateTime
+  editedAt: AWSDateTime
+  id: ID!
+  messageType: MessageType!
+  metadata: AWSJSON
+  senderId: String!
+  updatedAt: AWSDateTime!
+}
+
+type MessageRead {
+  _deleted: Boolean
+  _lastChangedAt: AWSTimestamp!
+  _version: Int!
+  createdAt: AWSDateTime!
+  id: ID!
+  messageId: String!
+  deliveredAt: AWSDateTime
+  readAt: AWSDateTime!
+  updatedAt: AWSDateTime!
+  userId: String!
+}
+
+type ModelConversationConnection {
+  items: [Conversation]!
+  nextToken: String
+  startedAt: AWSTimestamp
+}
+
+type ModelConversationParticipantConnection {
+  items: [ConversationParticipant]!
+  nextToken: String
+  startedAt: AWSTimestamp
+}
+
+type ModelMessageConnection {
+  items: [Message]!
+  nextToken: String
+  startedAt: AWSTimestamp
+}
+
+type ModelMessageReadConnection {
+  items: [MessageRead]!
+  nextToken: String
+  startedAt: AWSTimestamp
+}
+
+type ModelUserConnection {
+  items: [User]!
+  nextToken: String
+  startedAt: AWSTimestamp
+}
+
+type Mutation {
+  createConversation(condition: ModelConversationConditionInput, input: CreateConversationInput!): Conversation
+  createConversationParticipant(condition: ModelConversationParticipantConditionInput, input: CreateConversationParticipantInput!): ConversationParticipant
+  createMessage(condition: ModelMessageConditionInput, input: CreateMessageInput!): Message
+  createMessageRead(condition: ModelMessageReadConditionInput, input: CreateMessageReadInput!): MessageRead
+  createUser(condition: ModelUserConditionInput, input: CreateUserInput!): User
+  sendTyping(conversationId: String!, userId: String!): TypingEvent
+  deleteConversation(condition: ModelConversationConditionInput, input: DeleteConversationInput!): Conversation
+  deleteConversationParticipant(condition: ModelConversationParticipantConditionInput, input: DeleteConversationParticipantInput!): ConversationParticipant
+  deleteMessage(condition: ModelMessageConditionInput, input: DeleteMessageInput!): Message
+  deleteMessageRead(condition: ModelMessageReadConditionInput, input: DeleteMessageReadInput!): MessageRead
+  deleteUser(condition: ModelUserConditionInput, input: DeleteUserInput!): User
+  updateConversation(condition: ModelConversationConditionInput, input: UpdateConversationInput!): Conversation
+  updateConversationParticipant(condition: ModelConversationParticipantConditionInput, input: UpdateConversationParticipantInput!): ConversationParticipant
+  updateMessage(condition: ModelMessageConditionInput, input: UpdateMessageInput!): Message
+  updateMessageRead(condition: ModelMessageReadConditionInput, input: UpdateMessageReadInput!): MessageRead
+  updateUser(condition: ModelUserConditionInput, input: UpdateUserInput!): User
+}
+
+type Query {
+  conversationParticipantsByConversationIdAndUserId(conversationId: String!, filter: ModelConversationParticipantFilterInput, limit: Int, nextToken: String, sortDirection: ModelSortDirection, userId: ModelStringKeyConditionInput): ModelConversationParticipantConnection
+  conversationParticipantsByUserIdAndConversationId(conversationId: ModelStringKeyConditionInput, filter: ModelConversationParticipantFilterInput, limit: Int, nextToken: String, sortDirection: ModelSortDirection, userId: String!): ModelConversationParticipantConnection
+  getConversation(id: ID!): Conversation
+  getConversationParticipant(id: ID!): ConversationParticipant
+  getMessage(id: ID!): Message
+  getMessageRead(id: ID!): MessageRead
+  getUser(id: ID!): User
+  getUserByEmail(email: String!, filter: ModelUserFilterInput, limit: Int, nextToken: String, sortDirection: ModelSortDirection): ModelUserConnection
+  getUserByUsername(filter: ModelUserFilterInput, limit: Int, nextToken: String, sortDirection: ModelSortDirection, username: String!): ModelUserConnection
+  listConversationParticipants(filter: ModelConversationParticipantFilterInput, limit: Int, nextToken: String): ModelConversationParticipantConnection
+  listConversations(filter: ModelConversationFilterInput, limit: Int, nextToken: String): ModelConversationConnection
+  listMessageReads(filter: ModelMessageReadFilterInput, limit: Int, nextToken: String): ModelMessageReadConnection
+  listMessages(filter: ModelMessageFilterInput, limit: Int, nextToken: String): ModelMessageConnection
+  listUsers(filter: ModelUserFilterInput, limit: Int, nextToken: String): ModelUserConnection
+  messageReadsByMessageIdAndUserId(filter: ModelMessageReadFilterInput, limit: Int, messageId: String!, nextToken: String, sortDirection: ModelSortDirection, userId: ModelStringKeyConditionInput): ModelMessageReadConnection
+  messageReadsByUserIdAndReadAt(filter: ModelMessageReadFilterInput, limit: Int, nextToken: String, readAt: ModelStringKeyConditionInput, sortDirection: ModelSortDirection, userId: String!): ModelMessageReadConnection
+  messagesByConversationIdAndCreatedAt(conversationId: String!, createdAt: ModelStringKeyConditionInput, filter: ModelMessageFilterInput, limit: Int, nextToken: String, sortDirection: ModelSortDirection): ModelMessageConnection
+  messagesBySenderIdAndCreatedAt(createdAt: ModelStringKeyConditionInput, filter: ModelMessageFilterInput, limit: Int, nextToken: String, senderId: String!, sortDirection: ModelSortDirection): ModelMessageConnection
+  syncConversationParticipants(filter: ModelConversationParticipantFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelConversationParticipantConnection
+  syncConversations(filter: ModelConversationFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelConversationConnection
+  syncMessageReads(filter: ModelMessageReadFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelMessageReadConnection
+  syncMessages(filter: ModelMessageFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelMessageConnection
+  syncUsers(filter: ModelUserFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelUserConnection
+  lookupUserIdByUsername(username: String!): ID
+  lookupUserIdByEmail(email: String!): ID\n  lookupUserIdByEmail(email: String!): ID
+}
+
+type Subscription {
+  onCreateConversation(filter: ModelSubscriptionConversationFilterInput): Conversation @aws_subscribe(mutations : ["createConversation"])
+  onCreateConversationParticipant(filter: ModelSubscriptionConversationParticipantFilterInput, userId: String): ConversationParticipant @aws_subscribe(mutations : ["createConversationParticipant"])
+  onCreateMessage(filter: ModelSubscriptionMessageFilterInput, senderId: String): Message @aws_subscribe(mutations : ["createMessage"])
+  onMessageInConversation(conversationId: String!): Message @aws_subscribe(mutations : ["createMessage"])
+  onCreateMessageRead(filter: ModelSubscriptionMessageReadFilterInput, userId: String): MessageRead @aws_subscribe(mutations : ["createMessageRead"])
+  onCreateUser(filter: ModelSubscriptionUserFilterInput, id: String): User @aws_subscribe(mutations : ["createUser"])
+  onDeleteConversation(filter: ModelSubscriptionConversationFilterInput): Conversation @aws_subscribe(mutations : ["deleteConversation"])
+  onDeleteConversationParticipant(filter: ModelSubscriptionConversationParticipantFilterInput, userId: String): ConversationParticipant @aws_subscribe(mutations : ["deleteConversationParticipant"])
+  onDeleteMessage(filter: ModelSubscriptionMessageFilterInput, senderId: String): Message @aws_subscribe(mutations : ["deleteMessage"])
+  onDeleteMessageRead(filter: ModelSubscriptionMessageReadFilterInput, userId: String): MessageRead @aws_subscribe(mutations : ["deleteMessageRead"])
+  onDeleteUser(filter: ModelSubscriptionUserFilterInput, id: String): User @aws_subscribe(mutations : ["deleteUser"])
+  onUpdateConversation(filter: ModelSubscriptionConversationFilterInput): Conversation @aws_subscribe(mutations : ["updateConversation"])
+  onUpdateConversationParticipant(filter: ModelSubscriptionConversationParticipantFilterInput, userId: String): ConversationParticipant @aws_subscribe(mutations : ["updateConversationParticipant"])
+  onUpdateMessage(filter: ModelSubscriptionMessageFilterInput, senderId: String): Message @aws_subscribe(mutations : ["updateMessage"])
+  onUpdateMessageRead(filter: ModelSubscriptionMessageReadFilterInput, userId: String): MessageRead @aws_subscribe(mutations : ["updateMessageRead"])
+  onUpdateUser(filter: ModelSubscriptionUserFilterInput, id: String): User @aws_subscribe(mutations : ["updateUser"])
+  onTypingInConversation(conversationId: String!): TypingEvent @aws_subscribe(mutations : ["sendTyping"])
+}
+
+type User {
+  _deleted: Boolean
+  _lastChangedAt: AWSTimestamp!
+  _version: Int!
+  avatar: String
+  createdAt: AWSDateTime!
+  displayName: String
+  email: String!
+  id: ID!
+  lastSeen: AWSDateTime
+  status: UserStatus
+  updatedAt: AWSDateTime!
+  username: String!
+}
+
+type TypingEvent {
+  conversationId: String!
+  userId: String!
+  at: AWSDateTime!
+}
+
+enum ConversationRole {
+  ADMIN
+  MEMBER
+  MODERATOR
+}
+
+enum MessageType {
+  FILE
+  IMAGE
+  SYSTEM
+  TEXT
+}
+
+enum ModelAttributeTypes {
+  _null
+  binary
+  binarySet
+  bool
+  list
+  map
+  number
+  numberSet
+  string
+  stringSet
+}
+
+enum ModelSortDirection {
+  ASC
+  DESC
+}
+
+enum UserStatus {
+  AWAY
+  BUSY
+  OFFLINE
+  ONLINE
+}
+
+input CreateConversationInput {
+  _version: Int
+  createdAt: AWSDateTime
+  createdBy: String!
+  description: String
+  id: ID
+  isGroup: Boolean!
+  lastMessage: String
+  lastMessageAt: AWSDateTime
+  lastMessageSender: String
+  name: String
+  participants: [String!]!
+  updatedAt: AWSDateTime
+}
+
+input CreateConversationParticipantInput {
+  _version: Int
+  conversationId: String!
+  id: ID
+  joinedAt: AWSDateTime!
+  lastReadAt: AWSDateTime
+  leftAt: AWSDateTime
+  notifications: Boolean
+  role: ConversationRole
+  unreadCount: Int
+  userId: String!
+}
+
+input CreateMessageInput {
+  _version: Int
+  attachments: [String]
+  content: String!
+  conversationId: String!
+  createdAt: AWSDateTime
+  deletedAt: AWSDateTime
+  editedAt: AWSDateTime
+  id: ID
+  messageType: MessageType!
+  metadata: AWSJSON
+  senderId: String!
+  updatedAt: AWSDateTime
+}
+
+input CreateMessageReadInput {
+  _version: Int
+  id: ID
+  messageId: String!
+  deliveredAt: AWSDateTime
+  readAt: AWSDateTime!
+  userId: String!
+}
+
+input CreateUserInput {
+  _version: Int
+  avatar: String
+  createdAt: AWSDateTime
+  displayName: String
+  email: String!
+  id: ID
+  lastSeen: AWSDateTime
+  status: UserStatus
+  updatedAt: AWSDateTime
+  username: String!
+}
+
+input DeleteConversationInput {
+  _version: Int
+  id: ID!
+}
+
+input DeleteConversationParticipantInput {
+  _version: Int
+  id: ID!
+}
+
+input DeleteMessageInput {
+  _version: Int
+  id: ID!
+}
+
+input DeleteMessageReadInput {
+  _version: Int
+  id: ID!
+}
+
+input DeleteUserInput {
+  _version: Int
+  id: ID!
+}
+
+input ModelBooleanInput {
+  attributeExists: Boolean
+  attributeType: ModelAttributeTypes
+  eq: Boolean
+  ne: Boolean
+}
+
+input ModelConversationConditionInput {
+  _deleted: ModelBooleanInput
+  and: [ModelConversationConditionInput]
+  createdAt: ModelStringInput
+  createdBy: ModelStringInput
+  description: ModelStringInput
+  isGroup: ModelBooleanInput
+  lastMessage: ModelStringInput
+  lastMessageAt: ModelStringInput
+  lastMessageSender: ModelStringInput
+  name: ModelStringInput
+  not: ModelConversationConditionInput
+  or: [ModelConversationConditionInput]
+  participants: ModelStringInput
+  updatedAt: ModelStringInput
+}
+
+input ModelConversationFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelConversationFilterInput]
+  createdAt: ModelStringInput
+  createdBy: ModelStringInput
+  description: ModelStringInput
+  id: ModelIDInput
+  isGroup: ModelBooleanInput
+  lastMessage: ModelStringInput
+  lastMessageAt: ModelStringInput
+  lastMessageSender: ModelStringInput
+  name: ModelStringInput
+  not: ModelConversationFilterInput
+  or: [ModelConversationFilterInput]
+  participants: ModelStringInput
+  updatedAt: ModelStringInput
+}
+
+input ModelConversationParticipantConditionInput {
+  _deleted: ModelBooleanInput
+  and: [ModelConversationParticipantConditionInput]
+  conversationId: ModelStringInput
+  createdAt: ModelStringInput
+  joinedAt: ModelStringInput
+  lastReadAt: ModelStringInput
+  leftAt: ModelStringInput
+  not: ModelConversationParticipantConditionInput
+  notifications: ModelBooleanInput
+  or: [ModelConversationParticipantConditionInput]
+  role: ModelConversationRoleInput
+  unreadCount: ModelIntInput
+  updatedAt: ModelStringInput
+  userId: ModelStringInput
+}
+
+input ModelConversationParticipantFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelConversationParticipantFilterInput]
+  conversationId: ModelStringInput
+  createdAt: ModelStringInput
+  id: ModelIDInput
+  joinedAt: ModelStringInput
+  lastReadAt: ModelStringInput
+  leftAt: ModelStringInput
+  not: ModelConversationParticipantFilterInput
+  notifications: ModelBooleanInput
+  or: [ModelConversationParticipantFilterInput]
+  role: ModelConversationRoleInput
+  unreadCount: ModelIntInput
+  updatedAt: ModelStringInput
+  userId: ModelStringInput
+}
+
+input ModelConversationRoleInput {
+  eq: ConversationRole
+  ne: ConversationRole
+}
+
+input ModelFloatInput {
+  attributeExists: Boolean
+  attributeType: ModelAttributeTypes
+  between: [Float]
+  eq: Float
+  ge: Float
+  gt: Float
+  le: Float
+  lt: Float
+  ne: Float
+}
+
+input ModelIDInput {
+  attributeExists: Boolean
+  attributeType: ModelAttributeTypes
+  beginsWith: ID
+  between: [ID]
+  contains: ID
+  eq: ID
+  ge: ID
+  gt: ID
+  le: ID
+  lt: ID
+  ne: ID
+  notContains: ID
+  size: ModelSizeInput
+}
+
+input ModelIntInput {
+  attributeExists: Boolean
+  attributeType: ModelAttributeTypes
+  between: [Int]
+  eq: Int
+  ge: Int
+  gt: Int
+  le: Int
+  lt: Int
+  ne: Int
+}
+
+input ModelMessageConditionInput {
+  _deleted: ModelBooleanInput
+  and: [ModelMessageConditionInput]
+  attachments: ModelStringInput
+  content: ModelStringInput
+  conversationId: ModelStringInput
+  createdAt: ModelStringInput
+  deletedAt: ModelStringInput
+  editedAt: ModelStringInput
+  messageType: ModelMessageTypeInput
+  metadata: ModelStringInput
+  not: ModelMessageConditionInput
+  or: [ModelMessageConditionInput]
+  senderId: ModelStringInput
+  updatedAt: ModelStringInput
+}
+
+input ModelMessageFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelMessageFilterInput]
+  attachments: ModelStringInput
+  content: ModelStringInput
+  conversationId: ModelStringInput
+  createdAt: ModelStringInput
+  deletedAt: ModelStringInput
+  editedAt: ModelStringInput
+  id: ModelIDInput
+  messageType: ModelMessageTypeInput
+  metadata: ModelStringInput
+  not: ModelMessageFilterInput
+  or: [ModelMessageFilterInput]
+  senderId: ModelStringInput
+  updatedAt: ModelStringInput
+}
+
+input ModelMessageReadConditionInput {
+  _deleted: ModelBooleanInput
+  and: [ModelMessageReadConditionInput]
+  createdAt: ModelStringInput
+  messageId: ModelStringInput
+  not: ModelMessageReadConditionInput
+  or: [ModelMessageReadConditionInput]
+  readAt: ModelStringInput
+  updatedAt: ModelStringInput
+  userId: ModelStringInput
+}
+
+input ModelMessageReadFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelMessageReadFilterInput]
+  createdAt: ModelStringInput
+  id: ModelIDInput
+  messageId: ModelStringInput
+  not: ModelMessageReadFilterInput
+  or: [ModelMessageReadFilterInput]
+  readAt: ModelStringInput
+  updatedAt: ModelStringInput
+  userId: ModelStringInput
+}
+
+input ModelMessageTypeInput {
+  eq: MessageType
+  ne: MessageType
+}
+
+input ModelSizeInput {
+  between: [Int]
+  eq: Int
+  ge: Int
+  gt: Int
+  le: Int
+  lt: Int
+  ne: Int
+}
+
+input ModelStringInput {
+  attributeExists: Boolean
+  attributeType: ModelAttributeTypes
+  beginsWith: String
+  between: [String]
+  contains: String
+  eq: String
+  ge: String
+  gt: String
+  le: String
+  lt: String
+  ne: String
+  notContains: String
+  size: ModelSizeInput
+}
+
+input ModelStringKeyConditionInput {
+  beginsWith: String
+  between: [String]
+  eq: String
+  ge: String
+  gt: String
+  le: String
+  lt: String
+}
+
+input ModelSubscriptionBooleanInput {
+  eq: Boolean
+  ne: Boolean
+}
+
+input ModelSubscriptionConversationFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelSubscriptionConversationFilterInput]
+  createdAt: ModelSubscriptionStringInput
+  createdBy: ModelSubscriptionStringInput
+  description: ModelSubscriptionStringInput
+  id: ModelSubscriptionIDInput
+  isGroup: ModelSubscriptionBooleanInput
+  lastMessage: ModelSubscriptionStringInput
+  lastMessageAt: ModelSubscriptionStringInput
+  lastMessageSender: ModelSubscriptionStringInput
+  name: ModelSubscriptionStringInput
+  or: [ModelSubscriptionConversationFilterInput]
+  participants: ModelStringInput
+  updatedAt: ModelSubscriptionStringInput
+}
+
+input ModelSubscriptionConversationParticipantFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelSubscriptionConversationParticipantFilterInput]
+  conversationId: ModelSubscriptionStringInput
+  createdAt: ModelSubscriptionStringInput
+  id: ModelSubscriptionIDInput
+  joinedAt: ModelSubscriptionStringInput
+  lastReadAt: ModelSubscriptionStringInput
+  leftAt: ModelSubscriptionStringInput
+  notifications: ModelSubscriptionBooleanInput
+  or: [ModelSubscriptionConversationParticipantFilterInput]
+  role: ModelSubscriptionStringInput
+  unreadCount: ModelSubscriptionIntInput
+  updatedAt: ModelSubscriptionStringInput
+  userId: ModelStringInput
+}
+
+input ModelSubscriptionFloatInput {
+  between: [Float]
+  eq: Float
+  ge: Float
+  gt: Float
+  in: [Float]
+  le: Float
+  lt: Float
+  ne: Float
+  notIn: [Float]
+}
+
+input ModelSubscriptionIDInput {
+  beginsWith: ID
+  between: [ID]
+  contains: ID
+  eq: ID
+  ge: ID
+  gt: ID
+  in: [ID]
+  le: ID
+  lt: ID
+  ne: ID
+  notContains: ID
+  notIn: [ID]
+}
+
+input ModelSubscriptionIntInput {
+  between: [Int]
+  eq: Int
+  ge: Int
+  gt: Int
+  in: [Int]
+  le: Int
+  lt: Int
+  ne: Int
+  notIn: [Int]
+}
+
+input ModelSubscriptionMessageFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelSubscriptionMessageFilterInput]
+  attachments: ModelSubscriptionStringInput
+  content: ModelSubscriptionStringInput
+  conversationId: ModelSubscriptionStringInput
+  createdAt: ModelSubscriptionStringInput
+  deletedAt: ModelSubscriptionStringInput
+  editedAt: ModelSubscriptionStringInput
+  id: ModelSubscriptionIDInput
+  messageType: ModelSubscriptionStringInput
+  metadata: ModelSubscriptionStringInput
+  or: [ModelSubscriptionMessageFilterInput]
+  senderId: ModelStringInput
+  updatedAt: ModelSubscriptionStringInput
+}
+
+input ModelSubscriptionMessageReadFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelSubscriptionMessageReadFilterInput]
+  createdAt: ModelSubscriptionStringInput
+  id: ModelSubscriptionIDInput
+  messageId: ModelSubscriptionStringInput
+  or: [ModelSubscriptionMessageReadFilterInput]
+  readAt: ModelSubscriptionStringInput
+  updatedAt: ModelSubscriptionStringInput
+  userId: ModelStringInput
+}
+
+input ModelSubscriptionStringInput {
+  beginsWith: String
+  between: [String]
+  contains: String
+  eq: String
+  ge: String
+  gt: String
+  in: [String]
+  le: String
+  lt: String
+  ne: String
+  notContains: String
+  notIn: [String]
+}
+
+input ModelSubscriptionUserFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelSubscriptionUserFilterInput]
+  avatar: ModelSubscriptionStringInput
+  createdAt: ModelSubscriptionStringInput
+  displayName: ModelSubscriptionStringInput
+  email: ModelSubscriptionStringInput
+  id: ModelStringInput
+  lastSeen: ModelSubscriptionStringInput
+  or: [ModelSubscriptionUserFilterInput]
+  status: ModelSubscriptionStringInput
+  updatedAt: ModelSubscriptionStringInput
+  username: ModelSubscriptionStringInput
+}
+
+input ModelUserConditionInput {
+  _deleted: ModelBooleanInput
+  and: [ModelUserConditionInput]
+  avatar: ModelStringInput
+  createdAt: ModelStringInput
+  displayName: ModelStringInput
+  email: ModelStringInput
+  id: ModelStringInput
+  lastSeen: ModelStringInput
+  not: ModelUserConditionInput
+  or: [ModelUserConditionInput]
+  status: ModelUserStatusInput
+  updatedAt: ModelStringInput
+  username: ModelStringInput
+}
+
+input ModelUserFilterInput {
+  _deleted: ModelBooleanInput
+  and: [ModelUserFilterInput]
+  avatar: ModelStringInput
+  createdAt: ModelStringInput
+  displayName: ModelStringInput
+  email: ModelStringInput
+  id: ModelIDInput
+  lastSeen: ModelStringInput
+  not: ModelUserFilterInput
+  or: [ModelUserFilterInput]
+  status: ModelUserStatusInput
+  updatedAt: ModelStringInput
+  username: ModelStringInput
+}
+
+input ModelUserStatusInput {
+  eq: UserStatus
+  ne: UserStatus
+}
+
+input UpdateConversationInput {
+  _version: Int
+  createdAt: AWSDateTime
+  createdBy: String
+  description: String
+  id: ID!
+  isGroup: Boolean
+  lastMessage: String
+  lastMessageAt: AWSDateTime
+  lastMessageSender: String
+  name: String
+  participants: [String!]
+  updatedAt: AWSDateTime
+}
+
+input UpdateConversationParticipantInput {
+  _version: Int
+  conversationId: String
+  id: ID!
+  joinedAt: AWSDateTime
+  lastReadAt: AWSDateTime
+  leftAt: AWSDateTime
+  notifications: Boolean
+  role: ConversationRole
+  unreadCount: Int
+  userId: String
+}
+
+input UpdateMessageInput {
+  _version: Int
+  attachments: [String]
+  content: String
+  conversationId: String
+  createdAt: AWSDateTime
+  deletedAt: AWSDateTime
+  editedAt: AWSDateTime
+  id: ID!
+  messageType: MessageType
+  metadata: AWSJSON
+  senderId: String
+  updatedAt: AWSDateTime
+}
+
+input UpdateMessageReadInput {
+  _version: Int
+  id: ID!
+  messageId: String
+  deliveredAt: AWSDateTime
+  readAt: AWSDateTime
+  userId: String
+}
+
+input UpdateUserInput {
+  _version: Int
+  avatar: String
+  createdAt: AWSDateTime
+  displayName: String
+  email: String
+  id: ID!
+  lastSeen: AWSDateTime
+  status: UserStatus
+  updatedAt: AWSDateTime
+  username: String
+}
+
+

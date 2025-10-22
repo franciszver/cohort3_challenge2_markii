@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DynamoDB table for messages (1:1) with PK conversationId and SK timestamp
+
+Parameters:
+  TableName:
+    Type: String
+    Default: Messages
+    Description: DynamoDB table name for messages
+
+Resources:
+  MessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: conversationId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: conversationId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: cohort3_challenge2_markii
+        - Key: Component
+          Value: Messages
+
+Outputs:
+  TableName:
+    Value: !Ref MessagesTable
+    Export:
+      Name: Messages-TableName
+  TableArn:
+    Value: !GetAtt MessagesTable.Arn
+    Export:
+      Name: Messages-TableArn

@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DynamoDB table for user profiles with GSI on username
+
+Parameters:
+  TableName:
+    Type: String
+    Default: UserProfiles
+    Description: DynamoDB table name for user profiles
+
+Resources:
+  UserProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: usernameGSI
+          KeySchema:
+            - AttributeName: username
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: cohort3_challenge2_markii
+        - Key: Component
+          Value: UserProfiles
+
+Outputs:
+  TableName:
+    Value: !Ref UserProfilesTable
+    Export:
+      Name: UserProfiles-TableName
+  TableArn:
+    Value: !GetAtt UserProfilesTable.Arn
+    Export:
+      Name: UserProfiles-TableArn

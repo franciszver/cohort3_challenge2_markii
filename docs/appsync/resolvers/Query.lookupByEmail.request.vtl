@@ -1,0 +1,15 @@
+{
+  "version": "2018-05-29",
+  "operation": "Query",
+  "index": "emailLowerGSI",
+  "query": {
+    "expression": "#eml = :eml",
+    "expressionNames": { "#eml": "emailLower" },
+    "expressionValues": { ":eml": $util.dynamodb.toDynamoDBJson($util.toLower($ctx.args.email)) }
+  },
+  "limit": 1,
+  "scanIndexForward": true,
+  "consistentRead": false
+}
+
+

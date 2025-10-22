@@ -1,0 +1,25 @@
+﻿#set($ts = $util.time.nowISO8601())
+#set($senderId = $ctx.identity.sub)
+#set($id = $util.autoId())
+{
+  "version": "2018-05-29",
+  "operation": "PutItem",
+  "key": {
+    "conversationId": $util.dynamodb.toDynamoDBJson($ctx.args.conversationId),
+    "timestamp": {"S": "$ts"}
+  },
+  "attributeValues": {
+    "messageId": $util.dynamodb.toDynamoDBJson($id),
+    "senderId": $util.dynamodb.toDynamoDBJson($senderId),
+    "content": $util.dynamodb.toDynamoDBJson($ctx.args.content),
+    "status": $util.dynamodb.toDynamoDBJson("SENT")
+  },
+  "condition": {
+    "expression": "attribute_not_exists(#pk) AND attribute_not_exists(#sk)",
+    "expressionNames": {
+      "#pk": "conversationId",
+      "#sk": "timestamp"
+    }
+  },
+  "returnValues": "ALL_NEW"
+}

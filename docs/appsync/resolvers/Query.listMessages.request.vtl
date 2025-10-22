@@ -1,0 +1,20 @@
+﻿#set($limit = $util.defaultIfNull($ctx.args.limit, 25))
+{
+  "version": "2018-05-29",
+  "operation": "Query",
+  "query": {
+    "expression": "#pk = :pk",
+    "expressionNames": {
+      "#pk": "conversationId"
+    },
+    "expressionValues": {
+      ":pk": $util.dynamodb.toDynamoDBJson($ctx.args.conversationId)
+    }
+  },
+  "limit": $limit,
+  "scanIndexForward": false,
+  #if($ctx.args.nextToken)
+  "nextToken": "$ctx.args.nextToken",
+  #end
+  "consistentRead": false
+}
