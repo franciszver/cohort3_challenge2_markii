@@ -3,6 +3,7 @@ import { View, Button, Text, TextInput } from 'react-native';
 import ChatHeader from '../components/ChatHeader';
 import { getCurrentUser, signOut } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
+import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
 
 export default function HomeScreen({ navigation }: any) {
   const [otherUserSubInput, setOtherUserSubInput] = useState('');
@@ -10,9 +11,32 @@ export default function HomeScreen({ navigation }: any) {
   const [lookupLog, setLookupLog] = useState<string | null>(null);
   const [mySub, setMySub] = useState<string | null>(null);
   const [copyMsg, setCopyMsg] = useState<string | null>(null);
+  const [online, setOnline] = useState<boolean>(true);
+
+  React.useEffect(() => {
+    let timer: any;
+    let sub: any;
+    (async () => {
+      try {
+        const me = await getCurrentUser();
+        setMySub(me.userId);
+        await updateLastSeen(me.userId);
+        timer = setInterval(() => { updateLastSeen(me.userId).catch(() => {}); }, 45000);
+        const subscribe = subscribeUserPresence(me.userId);
+        sub = subscribe({ next: (evt: any) => {
+          const u = evt.data.onUpdateUser;
+          if (u?.lastSeen) {
+            const last = new Date(u.lastSeen).getTime();
+            setOnline(Date.now() - last <= 60000);
+          }
+        }, error: () => {} });
+      } catch {}
+    })();
+    return () => { if (timer) clearInterval(timer); sub?.unsubscribe?.(); };
+  }, []);
   return (
     <View>
-      <ChatHeader username="Your Username" />
+      <ChatHeader username="Your Username" online={online} />
       <View style={{ padding: 16 }}>
         <Text style={{ marginBottom: 8 }}>My Home</Text>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 }}>

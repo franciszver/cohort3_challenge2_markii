@@ -1,7 +1,10 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
-import { View, FlatList, TextInput, Button, Text } from 'react-native';
-import { listMessages, sendMessage, subscribeMessages } from '../graphql/messages';
+import { View, FlatList, TextInput, Button, Text, Image } from 'react-native';
+import { listMessagesByConversation, createTextMessage, subscribeMessagesInConversation, markDelivered, markRead, sendTyping, subscribeTyping } from '../graphql/messages';
 import { getCurrentUser } from 'aws-amplify/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import ChatHeader from '../components/ChatHeader';
+import { useIsFocused } from '@react-navigation/native';
 
 function conversationIdFor(a: string, b: string) {
   return [a, b].sort().join('#');
@@ -11,7 +14,16 @@ export default function ChatScreen({ route }: any) {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState('');
   const subRef = useRef<any>(null);
+  const typingSubRef = useRef<any>(null);
+  const typingTimerRef = useRef<any>(null);
+  const lastTypingSentRef = useRef<number>(0);
+  const [isTyping, setIsTyping] = useState(false);
+  const [nextToken, setNextToken] = useState<string | undefined>(undefined);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const retryTimerRef = useRef<any>(null);
+  const isFocused = useIsFocused();
   const otherUserId = route.params?.otherUserSub as string;
 
   useEffect(() => {
@@ -19,18 +31,101 @@ export default function ChatScreen({ route }: any) {
       try {
         const me = await getCurrentUser();
         const cid = conversationIdFor(me.userId, otherUserId);
-        const res: any = await listMessages(cid, 25);
-        setMessages(res.data.listMessages.items);
-        const sub = subscribeMessages(cid)({
-          next: (evt: any) => setMessages(prev => [evt.data.onMessage, ...prev]),
+        // hydrate from cache first
+        const cached = await AsyncStorage.getItem(`history:${cid}`);
+        if (cached) {
+          try { setMessages(JSON.parse(cached)); } catch {}
+        }
+        // fetch latest page
+        const res: any = await listMessagesByConversation(cid, 25);
+        const items = res.data.messagesByConversationIdAndCreatedAt.items;
+        setNextToken(res.data.messagesByConversationIdAndCreatedAt.nextToken);
+        setMessages(items);
+        await AsyncStorage.setItem(`history:${cid}`, JSON.stringify(items));
+        // mark delivered for fetched messages not sent by me
+        try {
+          for (const m of items) {
+            if (m.senderId !== me.userId) {
+              await markDelivered(m.id, me.userId);
+            }
+          }
+        } catch {}
+        // subscribe to new messages in this conversation
+        const subscribe = subscribeMessagesInConversation(cid);
+        const sub = subscribe({
+          next: async (evt: any) => {
+            const m = evt.data.onMessageInConversation;
+            setMessages(prev => {
+              const next = [m, ...prev];
+              AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
+              return next;
+            });
+            try { await markDelivered(m.id, me.userId); } catch {}
+            if (m.senderId !== me.userId) {
+              try { await markRead(m.id, me.userId); } catch {}
+              // foreground local notification when chat not focused
+              if (!isFocused) {
+                try {
+                  // @ts-ignore
+                  const Notifications: any = await import('expo-notifications');
+                  await Notifications.requestPermissionsAsync();
+                  await Notifications.scheduleNotificationAsync({
+                    content: { title: 'New message', body: m.content || 'New message received' },
+                    trigger: null,
+                  });
+                } catch {}
+              }
+            }
+          },
           error: (e: any) => console.log('sub error', e),
         });
         subRef.current = sub;
+        // subscribe to typing events
+        const typingSubscribe = subscribeTyping(cid);
+        const typingSub = typingSubscribe({
+          next: (evt: any) => {
+            const ev = evt.data.onTypingInConversation;
+            if (ev?.userId && ev.userId !== me.userId) {
+              setIsTyping(true);
+              if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+              typingTimerRef.current = setTimeout(() => setIsTyping(false), 2000);
+            }
+          },
+          error: () => {},
+        });
+        typingSubRef.current = typingSub;
+        // drain outbox with retry/backoff
+        const drainOnce = async () => {
+          const outboxRaw = await AsyncStorage.getItem(`outbox:${cid}`);
+          const outbox = outboxRaw ? JSON.parse(outboxRaw) : [];
+          const remaining: any[] = [];
+          for (const job of outbox) {
+            const attempts = job.attempts || 0;
+            try {
+              if (job.type === 'image' && job.imageUrl) {
+                await createTextMessage(cid, `[image] ${job.imageUrl}`, me.userId);
+              } else if (job.content) {
+                await createTextMessage(cid, job.content, me.userId);
+              }
+            } catch {
+              job.attempts = attempts + 1;
+              const delayMs = Math.min(30000, 1000 * Math.pow(2, attempts));
+              job.nextTryAt = Date.now() + delayMs;
+              remaining.push(job);
+            }
+          }
+          if (remaining.length) {
+            await AsyncStorage.setItem(`outbox:${cid}`, JSON.stringify(remaining));
+          } else {
+            await AsyncStorage.removeItem(`outbox:${cid}`);
+          }
+        };
+        await drainOnce();
       } catch (e: any) {
         setError(e?.message ?? 'Failed to load chat');
       }
     })();
-    return () => subRef.current?.unsubscribe?.();
+    return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); };
   }, []);
 
   const onSend = async () => {
@@ -38,40 +133,135 @@ export default function ChatScreen({ route }: any) {
       setError(null);
       const me = await getCurrentUser();
       const cid = conversationIdFor(me.userId, otherUserId);
-      const optimistic = {
+      const localId = `local-${Date.now()}`;
+      const optimistic: any = {
+        id: localId,
         conversationId: cid,
-        timestamp: new Date().toISOString(),
-        messageId: `local-${Date.now()}`,
+        createdAt: new Date().toISOString(),
         senderId: me.userId,
         content: input,
-        status: 'PENDING',
+        messageType: 'TEXT',
+        _localStatus: 'PENDING',
       };
       setMessages(prev => [optimistic, ...prev]);
       setInput('');
-      const res: any = await sendMessage(cid, optimistic.content);
-      const saved = res.data.sendMessage;
-      setMessages(prev => prev.map(m => (m.messageId === optimistic.messageId ? saved : m)));
+      try {
+        const res: any = await createTextMessage(cid, optimistic.content, me.userId);
+        const saved = res.data.createMessage;
+        setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
+      } catch (sendErr) {
+        const key = `outbox:${cid}`;
+        const raw = await AsyncStorage.getItem(key);
+        const outbox = raw ? JSON.parse(raw) : [];
+        outbox.push({ type: 'text', content: optimistic.content, createdAt: optimistic.createdAt });
+        await AsyncStorage.setItem(key, JSON.stringify(outbox));
+      }
+      const snapshot = (prev => [optimistic, ...prev])(messages);
+      AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
     } catch (e: any) {
       setError(e?.message ?? 'Send failed');
     }
   };
 
+  const onSendImage = async () => {
+    try {
+      setError(null);
+      const me = await getCurrentUser();
+      const cid = conversationIdFor(me.userId, otherUserId);
+      const url = imageUrl.trim();
+      if (!url) return;
+      const localId = `local-img-${Date.now()}`;
+      const optimistic: any = {
+        id: localId,
+        conversationId: cid,
+        createdAt: new Date().toISOString(),
+        senderId: me.userId,
+        content: `[image] ${url}`,
+        attachments: [url],
+        messageType: 'IMAGE',
+        _localStatus: 'PENDING',
+      };
+      setMessages(prev => [optimistic, ...prev]);
+      setImageUrl('');
+      try {
+        // For MVP, send the URL as content reference; uploading to S3 can be added later
+        const res: any = await createTextMessage(cid, optimistic.content, me.userId);
+        const saved = res.data.createMessage;
+        setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
+      } catch (sendErr) {
+        const key = `outbox:${cid}`;
+        const raw = await AsyncStorage.getItem(key);
+        const outbox = raw ? JSON.parse(raw) : [];
+        outbox.push({ type: 'image', imageUrl: url, createdAt: optimistic.createdAt });
+        await AsyncStorage.setItem(key, JSON.stringify(outbox));
+      }
+      const snapshot = (prev => [optimistic, ...prev])(messages);
+      AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
+    } catch (e: any) {
+      setError(e?.message ?? 'Send image failed');
+    }
+  };
+
+  const onChangeInput = async (text: string) => {
+    setInput(text);
+    try {
+      const now = Date.now();
+      if (now - lastTypingSentRef.current > 1200) {
+        lastTypingSentRef.current = now;
+        const me = await getCurrentUser();
+        const cid = conversationIdFor(me.userId, otherUserId);
+        await sendTyping(cid, me.userId);
+      }
+    } catch {}
+  };
+
   return (
     <View style={{ flex: 1 }}>
+      <ChatHeader username={otherUserId} online={undefined} />
+      {isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
       <FlatList
         inverted
         data={messages}
-        keyExtractor={(item) => item.messageId}
-        renderItem={({ item }) => (
+        keyExtractor={(item: any) => item.id}
+        onEndReachedThreshold={0.3}
+        onEndReached={async () => {
+          if (isLoadingMore || !nextToken) return;
+          try {
+            setIsLoadingMore(true);
+            const me = await getCurrentUser();
+            const cid = conversationIdFor(me.userId, otherUserId);
+            const res: any = await listMessagesByConversation(cid, 25, nextToken);
+            const page = res.data.messagesByConversationIdAndCreatedAt;
+            const older = page.items || [];
+            setNextToken(page.nextToken);
+            setMessages(prev => {
+              const next = [...prev, ...older];
+              AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
+              return next;
+            });
+          } catch {}
+          finally { setIsLoadingMore(false); }
+        }}
+        renderItem={({ item }: any) => (
           <View style={{ padding: 8 }}>
-            <Text>{item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} ({item.status})</Text>
+            {item.messageType === 'IMAGE' && item.attachments?.[0] ? (
+              <Image source={{ uri: item.attachments[0] }} style={{ width: 200, height: 200, borderRadius: 8 }} />
+            ) : (
+              <Text>
+                {item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} {item._localStatus ? `(${item._localStatus})` : ''}
+              </Text>
+            )}
           </View>
         )}
       />
       {error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
       <View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
-        <TextInput style={{ flex: 1, borderWidth: 1, padding: 8 }} value={input} onChangeText={setInput} placeholder="Message" />
+        <TextInput style={{ flex: 1, borderWidth: 1, padding: 8 }} value={input} onChangeText={onChangeInput} placeholder="Message" />
         <Button title="Send" onPress={onSend} />
+      </View>
+      <View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
+        <TextInput style={{ flex: 1, borderWidth: 1, padding: 8 }} value={imageUrl} onChangeText={setImageUrl} placeholder="Image URL" autoCapitalize="none" />
+        <Button title="Send Image" onPress={onSendImage} />
       </View>
     </View>
   );

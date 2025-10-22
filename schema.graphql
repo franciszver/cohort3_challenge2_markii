@@ -62,6 +62,7 @@ type MessageRead {
   createdAt: AWSDateTime!
   id: ID!
   messageId: String!
+  deliveredAt: AWSDateTime
   readAt: AWSDateTime!
   updatedAt: AWSDateTime!
   userId: String!
@@ -103,6 +104,7 @@ type Mutation {
   createMessage(condition: ModelMessageConditionInput, input: CreateMessageInput!): Message
   createMessageRead(condition: ModelMessageReadConditionInput, input: CreateMessageReadInput!): MessageRead
   createUser(condition: ModelUserConditionInput, input: CreateUserInput!): User
+  sendTyping(conversationId: String!, userId: String!): TypingEvent
   deleteConversation(condition: ModelConversationConditionInput, input: DeleteConversationInput!): Conversation
   deleteConversationParticipant(condition: ModelConversationParticipantConditionInput, input: DeleteConversationParticipantInput!): ConversationParticipant
   deleteMessage(condition: ModelMessageConditionInput, input: DeleteMessageInput!): Message
@@ -147,6 +149,7 @@ type Subscription {
   onCreateConversation(filter: ModelSubscriptionConversationFilterInput): Conversation @aws_subscribe(mutations : ["createConversation"])
   onCreateConversationParticipant(filter: ModelSubscriptionConversationParticipantFilterInput, userId: String): ConversationParticipant @aws_subscribe(mutations : ["createConversationParticipant"])
   onCreateMessage(filter: ModelSubscriptionMessageFilterInput, senderId: String): Message @aws_subscribe(mutations : ["createMessage"])
+  onMessageInConversation(conversationId: String!): Message @aws_subscribe(mutations : ["createMessage"])
   onCreateMessageRead(filter: ModelSubscriptionMessageReadFilterInput, userId: String): MessageRead @aws_subscribe(mutations : ["createMessageRead"])
   onCreateUser(filter: ModelSubscriptionUserFilterInput, id: String): User @aws_subscribe(mutations : ["createUser"])
   onDeleteConversation(filter: ModelSubscriptionConversationFilterInput): Conversation @aws_subscribe(mutations : ["deleteConversation"])
@@ -159,6 +162,7 @@ type Subscription {
   onUpdateMessage(filter: ModelSubscriptionMessageFilterInput, senderId: String): Message @aws_subscribe(mutations : ["updateMessage"])
   onUpdateMessageRead(filter: ModelSubscriptionMessageReadFilterInput, userId: String): MessageRead @aws_subscribe(mutations : ["updateMessageRead"])
   onUpdateUser(filter: ModelSubscriptionUserFilterInput, id: String): User @aws_subscribe(mutations : ["updateUser"])
+  onTypingInConversation(conversationId: String!): TypingEvent @aws_subscribe(mutations : ["sendTyping"])
 }
 
 type User {
@@ -174,6 +178,12 @@ type User {
   status: UserStatus
   updatedAt: AWSDateTime!
   username: String!
+}
+
+type TypingEvent {
+  conversationId: String!
+  userId: String!
+  at: AWSDateTime!
 }
 
 enum ConversationRole {
@@ -261,6 +271,7 @@ input CreateMessageReadInput {
   _version: Int
   id: ID
   messageId: String!
+  deliveredAt: AWSDateTime
   readAt: AWSDateTime!
   userId: String!
 }
@@ -747,6 +758,7 @@ input UpdateMessageReadInput {
   _version: Int
   id: ID!
   messageId: String
+  deliveredAt: AWSDateTime
   readAt: AWSDateTime
   userId: String
 }

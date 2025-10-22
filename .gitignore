@@ -2,3 +2,46 @@
 .env.local
 
 **/amplify/**
+
+# Node/Expo
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.expo/
+.expo-shared/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build/outputs
+*.apk
+*.aab
+build/
+dist/
+
+# Amplify/Expo generated
+amplify/#current-cloud-backend/
+amplify/.config/local-*
+mobile/amplify/
+mobile/src/amplifyconfiguration.json
+mobile/src/aws-exports.js
+
+# Local caches
+mobile/.cache/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/**/SQLite/*
+mobile/**/WebStorage/*
+
+# App data
+mobile/**/debug.log
+mobile/**/ReactNativeDevBundle.js
+
+# GraphQL generated
+mobile/src/graphql/schema.json
+mobile/src/graphql/queries.js
+mobile/src/graphql/mutations.js
+mobile/src/graphql/subscriptions.js

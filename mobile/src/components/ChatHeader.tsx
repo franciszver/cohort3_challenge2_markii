@@ -1,12 +1,15 @@
 ﻿import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 
-type Props = { username: string; avatar?: string };
+type Props = { username: string; avatar?: string; online?: boolean };
 
-export default function ChatHeader({ username, avatar }: Props) {
+export default function ChatHeader({ username, avatar, online }: Props) {
   return (
     <View style={styles.container}>
-      {avatar ? <Image source={{ uri: avatar }} style={styles.avatar} /> : <View style={styles.placeholder} />}
+      <View style={{ position: 'relative' }}>
+        {avatar ? <Image source={{ uri: avatar }} style={styles.avatar} /> : <View style={styles.placeholder} />}
+        <View style={[styles.presenceDot, { backgroundColor: online ? '#22c55e' : '#9ca3af' }]} />
+      </View>
       <Text style={styles.username}>{username}</Text>
     </View>
   );
@@ -16,5 +19,6 @@ const styles = StyleSheet.create({
   container: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#fff' },
   avatar: { width: 32, height: 32, borderRadius: 16, marginRight: 8 },
   placeholder: { width: 32, height: 32, borderRadius: 16, marginRight: 8, backgroundColor: '#ddd' },
+  presenceDot: { position: 'absolute', width: 10, height: 10, borderRadius: 5, right: 4, bottom: 4, borderWidth: 2, borderColor: '#fff' },
   username: { fontSize: 16, fontWeight: '600' },
 });

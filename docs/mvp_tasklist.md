@@ -16,13 +16,13 @@
 ## 🟦 Epic 2: Messaging (One-on-One, Real-Time)
 - [x] Define GraphQL schema for messages (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
 - [x] Create DynamoDB table for messages (messageId, senderId, receiverId, content, timestamp, status) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Implement GraphQL mutations for sending messages (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Implement GraphQL subscriptions for receiving messages in real time (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Build chat UI (message bubbles, input box, send button)  
-- [ ] Add optimistic UI updates (show message instantly with `PENDING` status)  
-- [ ] Update message status once confirmed by server (`SENT`, `DELIVERED`)  
-- [ ] Implement local cache (AsyncStorage/SQLite) for offline persistence  
-- [ ] Sync local cache with DynamoDB/AppSync on reconnect (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Implement GraphQL mutations for sending messages (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Implement GraphQL subscriptions for receiving messages in real time (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Build chat UI (message bubbles, input box, send button)  
+- [x] Add optimistic UI updates (show message instantly with `PENDING` status)  
+- [x] Update message status once confirmed by server (`SENT`, `DELIVERED`)  
+- [x] Implement local cache (AsyncStorage/SQLite) for offline persistence  
+- [x] Sync local cache with DynamoDB/AppSync on reconnect (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
 - [ ] **Emulator Test:** Send/receive messages, confirm real-time delivery and persistence  
 - [ ] **Update `.gitignore` / `.cursorignore`:** Add SQLite/AsyncStorage cache files, local debug logs, and any generated GraphQL schema files.  
 
