@@ -20,3 +20,15 @@ Attach resolvers:
 Notes:
 - `updateUserProfile` sets `createdAt` if not exists, updates `updatedAt`.
 - Consider enforcing unique usernames via a separate table or write-time check.
+
+#### lookupByEmail resolver (override-based)
+
+- Extend schema: `extend type Query { lookupByEmail(email: String!): ID @aws_cognito_user_pools }`
+- Datasource: DynamoDB `UserProfiles`
+- Resolver VTLs:
+  - Request: `docs/appsync/resolvers/Query.lookupByEmail.request.vtl` (GSI `emailLowerGSI` on `emailLower`)
+  - Response: `docs/appsync/resolvers/Query.lookupByEmail.response.vtl` (returns `userId` or `null`)
+- Test query:
+  ```graphql
+  query($email:String!){ lookupByEmail(email:$email) }
+  ```

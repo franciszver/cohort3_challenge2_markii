@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
 export default function AuthScreen({ navigation }: any) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [code, setCode] = useState('');
+	const [code, setCode] = useState('');
   const [log, setLog] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isSignedIn, setIsSignedIn] = useState<boolean>(false);
@@ -90,11 +90,15 @@ export default function AuthScreen({ navigation }: any) {
     }
   };
 
+	const onForgotPassword = () => {
+		navigation.navigate('ForgotPasswordRequest');
+	};
+
   return (
     <View style={{ flex: 1, padding: 16 }}>
       <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Welcome</Text>
       <TextInput placeholder="Email" autoCapitalize="none" value={email} onChangeText={setEmail} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <TextInput placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 16 }} />
+			<TextInput placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 16 }} />
       <View style={{ flexDirection: 'row', gap: 12 }}>
         <View style={{ flex: 1 }}>
           <Button title="Sign In" onPress={onSignIn} disabled={isSignedIn} />
@@ -103,6 +107,12 @@ export default function AuthScreen({ navigation }: any) {
           <Button title="Sign Up" onPress={onSignUp} />
         </View>
       </View>
+
+		<View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+			<View style={{ flex: 1 }}>
+				<Button title="Forgot Password" onPress={onForgotPassword} />
+			</View>
+		</View>
 
       {isSignedIn ? (
         <View style={{ marginTop: 12 }}>

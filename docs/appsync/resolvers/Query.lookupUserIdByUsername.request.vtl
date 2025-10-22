@@ -1,0 +1,10 @@
+{
+  "version": "2018-05-29",
+  "operation": "Scan",
+  "filter": {
+    "expression": "#u = :u",
+    "expressionNames": { "#u": "username" },
+    "expressionValues": { ":u": $util.dynamodb.toDynamoDBJson($ctx.args.username) }
+  },
+  "limit": 1
+}
