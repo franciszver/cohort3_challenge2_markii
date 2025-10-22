@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 import { View, FlatList, TextInput, Button, Text, Image } from 'react-native';
-import { listMessagesByConversation, createTextMessage, subscribeMessagesInConversation, markDelivered, markRead, sendTyping, subscribeTyping } from '../graphql/messages';
+import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping } from '../graphql/messages';
 import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
@@ -37,9 +37,9 @@ export default function ChatScreen({ route }: any) {
           try { setMessages(JSON.parse(cached)); } catch {}
         }
         // fetch latest page
-        const res: any = await listMessagesByConversation(cid, 25);
-        const items = res.data.messagesByConversationIdAndCreatedAt.items;
-        setNextToken(res.data.messagesByConversationIdAndCreatedAt.nextToken);
+        const res: any = await listMessagesCompat(cid, 25);
+        const items = res.items;
+        setNextToken(res.nextToken);
         setMessages(items);
         await AsyncStorage.setItem(`history:${cid}`, JSON.stringify(items));
         // mark delivered for fetched messages not sent by me
@@ -51,7 +51,7 @@ export default function ChatScreen({ route }: any) {
           }
         } catch {}
         // subscribe to new messages in this conversation
-        const subscribe = subscribeMessagesInConversation(cid);
+        const subscribe = subscribeMessagesCompat(cid);
         const sub = subscribe({
           next: async (evt: any) => {
             const m = evt.data.onMessageInConversation;
@@ -103,9 +103,9 @@ export default function ChatScreen({ route }: any) {
             const attempts = job.attempts || 0;
             try {
               if (job.type === 'image' && job.imageUrl) {
-                await createTextMessage(cid, `[image] ${job.imageUrl}`, me.userId);
+                await sendTextMessageCompat(cid, `[image] ${job.imageUrl}`, me.userId);
               } else if (job.content) {
-                await createTextMessage(cid, job.content, me.userId);
+                await sendTextMessageCompat(cid, job.content, me.userId);
               }
             } catch {
               job.attempts = attempts + 1;
@@ -146,8 +146,7 @@ export default function ChatScreen({ route }: any) {
       setMessages(prev => [optimistic, ...prev]);
       setInput('');
       try {
-        const res: any = await createTextMessage(cid, optimistic.content, me.userId);
-        const saved = res.data.createMessage;
+        const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
         setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
       } catch (sendErr) {
         const key = `outbox:${cid}`;
@@ -185,8 +184,7 @@ export default function ChatScreen({ route }: any) {
       setImageUrl('');
       try {
         // For MVP, send the URL as content reference; uploading to S3 can be added later
-        const res: any = await createTextMessage(cid, optimistic.content, me.userId);
-        const saved = res.data.createMessage;
+        const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
         setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
       } catch (sendErr) {
         const key = `outbox:${cid}`;
@@ -230,10 +228,9 @@ export default function ChatScreen({ route }: any) {
             setIsLoadingMore(true);
             const me = await getCurrentUser();
             const cid = conversationIdFor(me.userId, otherUserId);
-            const res: any = await listMessagesByConversation(cid, 25, nextToken);
-            const page = res.data.messagesByConversationIdAndCreatedAt;
-            const older = page.items || [];
-            setNextToken(page.nextToken);
+      const page: any = await listMessagesCompat(cid, 25, nextToken);
+      const older = page.items || [];
+      setNextToken(page.nextToken);
             setMessages(prev => {
               const next = [...prev, ...older];
               AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});

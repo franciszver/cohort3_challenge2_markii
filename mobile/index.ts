@@ -5,10 +5,8 @@ import { registerRootComponent } from 'expo';
 import { configureAmplify } from './src/aws';
 import App from './App';
 
-// Configure Amplify BEFORE any Auth/API usage to avoid init warnings
+// Configure Amplify early (clients are now lazily created, so static imports are safe)
 configureAmplify();
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
+// Register the root component synchronously so Expo can find the "main" entry
 registerRootComponent(App);

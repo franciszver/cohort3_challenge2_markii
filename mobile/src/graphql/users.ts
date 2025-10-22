@@ -1,6 +1,12 @@
 ﻿import { generateClient } from 'aws-amplify/api';
 
-const client = generateClient();
+let _client: ReturnType<typeof generateClient> | null = null;
+function getClient() {
+  if (_client == null) {
+    _client = generateClient();
+  }
+  return _client;
+}
 
 export async function updateLastSeen(userId: string, lastSeenISO?: string) {
   const mutation = /* GraphQL */ `
@@ -12,7 +18,7 @@ export async function updateLastSeen(userId: string, lastSeenISO?: string) {
     id: userId,
     lastSeen: lastSeenISO ?? new Date().toISOString(),
   } as const;
-  return client.graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
 }
 
 export function subscribeUserPresence(userId: string) {
@@ -22,7 +28,7 @@ export function subscribeUserPresence(userId: string) {
     }
   `;
   const variables = { filter: { id: { eq: userId } } } as const;
-  const op = client.graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
+  const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
   return op.subscribe.bind(op);
 }
 
@@ -35,7 +41,7 @@ export async function lookupUserIdByEmail(email: string) {
     }
   `;
   const emailLower = email.toLowerCase().trim();
-  return client.graphql({ query, variables: { emailLower, limit: 1 }, authMode: 'userPool' });
+  return getClient().graphql({ query, variables: { emailLower, limit: 1 }, authMode: 'userPool' });
 }
 
 export async function lookupUserIdByUsername(username: string) {
@@ -46,5 +52,5 @@ export async function lookupUserIdByUsername(username: string) {
       }
     }
   `;
-  return client.graphql({ query, variables: { username }, authMode: 'userPool' });
+  return getClient().graphql({ query, variables: { username }, authMode: 'userPool' });
 }

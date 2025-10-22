@@ -1,6 +1,12 @@
 ﻿import { generateClient } from 'aws-amplify/api';
 
-const client = generateClient();
+let _client: ReturnType<typeof generateClient> | null = null;
+function getClient() {
+  if (_client == null) {
+    _client = generateClient();
+  }
+  return _client;
+}
 
 export async function updateUserProfile(input: { username?: string; avatar?: string; status?: string }) {
   const mutation = /* GraphQL */ `
@@ -14,7 +20,7 @@ export async function updateUserProfile(input: { username?: string; avatar?: str
       }
     }
   `;
-  return client.graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
 }
 
 export async function getUserProfile(userId: string) {
@@ -29,5 +35,5 @@ export async function getUserProfile(userId: string) {
       }
     }
   `;
-  return client.graphql({ query, variables: { userId }, authMode: 'userPool' });
+  return getClient().graphql({ query, variables: { userId }, authMode: 'userPool' });
 }
