@@ -23,18 +23,18 @@
 - [x] Update message status once confirmed by server (`SENT`, `DELIVERED`)  
 - [x] Implement local cache (AsyncStorage/SQLite) for offline persistence  
 - [x] Sync local cache with DynamoDB/AppSync on reconnect (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] **Emulator Test:** Send/receive messages, confirm real-time delivery and persistence  
-- [ ] **Update `.gitignore` / `.cursorignore`:** Add SQLite/AsyncStorage cache files, local debug logs, and any generated GraphQL schema files.  
+- [x] **Emulator Test:** Send/receive messages, confirm real-time delivery and persistence  
+- [x] **Update `.gitignore` / `.cursorignore`:** Add SQLite/AsyncStorage cache files, local debug logs, and any generated GraphQL schema files.  
 
 ---
 
 ## 🟦 Epic 3: Presence Tracking
-- [ ] Design presence model (DynamoDB TTL or AppSync subscription events) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Implement backend logic to update user online/offline state (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Subscribe to presence updates in client  
-- [ ] Display online/offline indicator (green dot = online, gray = offline)  
-- [ ] **Emulator Test:** Run two clients, confirm presence indicators update in real time  
-- [ ] **Update `.gitignore` / `.cursorignore`:** Exclude presence-related debug logs or temporary state dumps used during testing.  
+- [x] Design presence model (User.lastSeen + AppSync subscription; 30s heartbeat, 90s threshold)  
+- [x] Implement backend logic to update user online/offline state (mutation updates lastSeen)  
+- [x] Subscribe to presence updates in client  
+- [x] Display online/offline indicator (green dot = online, gray = offline)  
+- [x] **Emulator Test:** Run two clients, confirm presence indicators update in real time  
+- [x] **Update `.gitignore` / `.cursorignore`:** Exclude presence-related debug logs or temporary state dumps used during testing.  
 
 ---
 

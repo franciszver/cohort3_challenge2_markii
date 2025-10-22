@@ -167,6 +167,17 @@ export async function markRead(messageId: string, userId: string) {
   return createMessageRead(messageId, userId, now);
 }
 
+export function subscribeReceiptsForUser(userId: string) {
+  const subscription = /* GraphQL */ `
+    subscription OnCreateMessageRead($filter: ModelSubscriptionMessageReadFilterInput) {
+      onCreateMessageRead(filter: $filter) { id messageId userId deliveredAt readAt createdAt updatedAt }
+    }
+  `;
+  const variables = { filter: { userId: { eq: userId } } } as const;
+  const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
+  return op.subscribe.bind(op);
+}
+
 export async function createImageMessage(
   conversationId: string,
   imageUrl: string,

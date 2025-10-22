@@ -5,6 +5,7 @@ import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
+import { updateLastSeen } from '../graphql/users';
 
 function conversationIdFor(a: string, b: string) {
   return [a, b].sort().join('#');
@@ -17,6 +18,7 @@ export default function ChatScreen({ route }: any) {
   const [imageUrl, setImageUrl] = useState('');
   const subRef = useRef<any>(null);
   const typingSubRef = useRef<any>(null);
+  const receiptsSubRef = useRef<any>(null);
   const typingTimerRef = useRef<any>(null);
   const lastTypingSentRef = useRef<number>(0);
   const [isTyping, setIsTyping] = useState(false);
@@ -55,6 +57,8 @@ export default function ChatScreen({ route }: any) {
         const sub = subscribe({
           next: async (evt: any) => {
             const m = evt.data.onMessageInConversation;
+            // Opportunistic presence update on inbound activity
+            try { const meNow = await getCurrentUser(); await updateLastSeen(meNow.userId); } catch {}
             setMessages(prev => {
               const next = [m, ...prev];
               AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
@@ -94,6 +98,15 @@ export default function ChatScreen({ route }: any) {
           error: () => {},
         });
         typingSubRef.current = typingSub;
+        // subscribe to receipts addressed to me (delivered/read)
+        try {
+          const { subscribeReceiptsForUser } = await import('../graphql/messages');
+          const receiptsStart = subscribeReceiptsForUser(me.userId);
+          const recSub = receiptsStart({ next: (_evt: any) => {
+            // Receipts UI can be added later; mutation hooks already record reads/delivered
+          }, error: () => {} });
+          receiptsSubRef.current = recSub;
+        } catch {}
         // drain outbox with retry/backoff
         const drainOnce = async () => {
           const outboxRaw = await AsyncStorage.getItem(`outbox:${cid}`);
@@ -125,7 +138,7 @@ export default function ChatScreen({ route }: any) {
         setError(e?.message ?? 'Failed to load chat');
       }
     })();
-    return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); };
+    return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); };
   }, []);
 
   const onSend = async () => {
@@ -147,6 +160,8 @@ export default function ChatScreen({ route }: any) {
       setInput('');
       try {
         const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
+        // Opportunistic presence update on outbound send
+        try { await updateLastSeen(me.userId); } catch {}
         setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
       } catch (sendErr) {
         const key = `outbox:${cid}`;
@@ -209,13 +224,15 @@ export default function ChatScreen({ route }: any) {
         const me = await getCurrentUser();
         const cid = conversationIdFor(me.userId, otherUserId);
         await sendTyping(cid, me.userId);
+        // Opportunistic presence update on typing bursts (lightweight)
+        try { await updateLastSeen(me.userId); } catch {}
       }
     } catch {}
   };
 
   return (
     <View style={{ flex: 1 }}>
-      <ChatHeader username={otherUserId} online={undefined} />
+      <ChatHeader username={otherUserId} online={undefined} subtitle={undefined} />
       {isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
       <FlatList
         inverted
@@ -244,9 +261,10 @@ export default function ChatScreen({ route }: any) {
             {item.messageType === 'IMAGE' && item.attachments?.[0] ? (
               <Image source={{ uri: item.attachments[0] }} style={{ width: 200, height: 200, borderRadius: 8 }} />
             ) : (
-              <Text>
-                {item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} {item._localStatus ? `(${item._localStatus})` : ''}
-              </Text>
+              <View>
+                <Text>{item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} {item._localStatus ? `(${item._localStatus})` : ''}</Text>
+                <Text style={{ color: '#6b7280', fontSize: 12 }}>{new Date(item.createdAt).toLocaleString()}</Text>
+              </View>
             )}
           </View>
         )}

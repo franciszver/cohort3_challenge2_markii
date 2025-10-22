@@ -24,6 +24,7 @@ export const createUser = /* GraphQL */ `
       displayName
       avatar
       status
+      lastSeen
       createdAt
       updatedAt
       __typename
@@ -43,6 +44,7 @@ export const updateUser = /* GraphQL */ `
       displayName
       avatar
       status
+      lastSeen
       createdAt
       updatedAt
       __typename
@@ -62,6 +64,7 @@ export const deleteUser = /* GraphQL */ `
       displayName
       avatar
       status
+      lastSeen
       createdAt
       updatedAt
       __typename

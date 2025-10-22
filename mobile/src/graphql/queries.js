@@ -11,6 +11,7 @@ export const getUser = /* GraphQL */ `
       displayName
       avatar
       status
+      lastSeen
       createdAt
       updatedAt
       __typename
@@ -32,6 +33,7 @@ export const listUsers = /* GraphQL */ `
         displayName
         avatar
         status
+        lastSeen
         createdAt
         updatedAt
         __typename
@@ -140,6 +142,7 @@ export const lookupByEmail = /* GraphQL */ `
         displayName
         avatar
         status
+        lastSeen
         createdAt
         updatedAt
         __typename
@@ -172,6 +175,7 @@ export const lookupUserIdByUsername = /* GraphQL */ `
         displayName
         avatar
         status
+        lastSeen
         createdAt
         updatedAt
         __typename

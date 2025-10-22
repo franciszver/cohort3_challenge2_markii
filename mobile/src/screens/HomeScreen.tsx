@@ -21,13 +21,15 @@ export default function HomeScreen({ navigation }: any) {
         const me = await getCurrentUser();
         setMySub(me.userId);
         await updateLastSeen(me.userId);
-        timer = setInterval(() => { updateLastSeen(me.userId).catch(() => {}); }, 45000);
+        // Heartbeat every 30s
+        timer = setInterval(() => { updateLastSeen(me.userId).catch(() => {}); }, 30000);
         const subscribe = subscribeUserPresence(me.userId);
         sub = subscribe({ next: (evt: any) => {
           const u = evt.data.onUpdateUser;
           if (u?.lastSeen) {
             const last = new Date(u.lastSeen).getTime();
-            setOnline(Date.now() - last <= 60000);
+            // Online threshold: 90s
+            setOnline(Date.now() - last <= 90000);
           }
         }, error: () => {} });
       } catch {}

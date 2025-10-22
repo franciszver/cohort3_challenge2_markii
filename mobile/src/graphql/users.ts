@@ -1,7 +1,7 @@
 ﻿import { generateClient } from 'aws-amplify/api';
 
-let _client: ReturnType<typeof generateClient> | null = null;
-function getClient() {
+let _client: any = null;
+function getClient(): any {
   if (_client == null) {
     _client = generateClient();
   }
@@ -30,6 +30,15 @@ export function subscribeUserPresence(userId: string) {
   const variables = { filter: { id: { eq: userId } } } as const;
   const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
   return op.subscribe.bind(op);
+}
+
+export async function getUserById(userId: string) {
+  const query = /* GraphQL */ `
+    query GetUser($id: ID!) {
+      getUser(id: $id) { id lastSeen status username avatar updatedAt }
+    }
+  `;
+  return getClient().graphql({ query, variables: { id: userId }, authMode: 'userPool' });
 }
 
 export async function lookupUserIdByEmail(email: string) {
