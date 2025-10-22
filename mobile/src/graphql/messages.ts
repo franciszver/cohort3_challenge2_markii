@@ -52,6 +52,7 @@ export async function listMessagesByConversation(
           attachments
           messageType
           senderId
+          editedAt
           createdAt
           updatedAt
         }
@@ -64,6 +65,35 @@ export async function listMessagesByConversation(
     variables: { conversationId, limit, nextToken, sortDirection: 'DESC' },
     authMode: 'userPool',
   });
+}
+
+export async function getLatestMessageInConversation(conversationId: string) {
+  const query = /* GraphQL */ `
+    query LatestMessage($conversationId: String!, $limit: Int, $sortDirection: ModelSortDirection) {
+      messagesByConversationIdAndCreatedAt(conversationId: $conversationId, limit: $limit, sortDirection: $sortDirection) {
+        items { id createdAt content senderId }
+      }
+    }
+  `;
+  const res: any = await getClient().graphql({ query, variables: { conversationId, limit: 1, sortDirection: 'DESC' }, authMode: 'userPool' });
+  return res?.data?.messagesByConversationIdAndCreatedAt?.items?.[0] || null;
+}
+
+export async function countMessagesAfter(conversationId: string, afterISO: string, sampleLimit = 50) {
+  const query = /* GraphQL */ `
+    query CountAfter($conversationId: String!, $after: ModelStringKeyConditionInput, $limit: Int) {
+      messagesByConversationIdAndCreatedAt(conversationId: $conversationId, createdAt: $after, limit: $limit, sortDirection: ASC) {
+        items { id }
+        nextToken
+      }
+    }
+  `;
+  const variables = { conversationId, after: { gt: afterISO }, limit: sampleLimit } as const;
+  const res: any = await getClient().graphql({ query, variables, authMode: 'userPool' });
+  const page = res?.data?.messagesByConversationIdAndCreatedAt;
+  const count = page?.items?.length || 0;
+  const more = !!page?.nextToken;
+  return { count, more };
 }
 
 export async function createTextMessage(
@@ -176,6 +206,17 @@ export function subscribeReceiptsForUser(userId: string) {
   const variables = { filter: { userId: { eq: userId } } } as const;
   const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
   return op.subscribe.bind(op);
+}
+
+export async function getReceiptForMessageUser(messageId: string, userId: string) {
+  const query = /* GraphQL */ `
+    query Receipt($messageId: String!, $userId: ModelStringKeyConditionInput, $limit: Int) {
+      messageReadsByMessageIdAndUserId(messageId: $messageId, userId: $userId, limit: $limit) {
+        items { id messageId userId deliveredAt readAt createdAt updatedAt }
+      }
+    }
+  `;
+  return getClient().graphql({ query, variables: { messageId, userId: { eq: userId }, limit: 1 }, authMode: 'userPool' });
 }
 
 export async function createImageMessage(

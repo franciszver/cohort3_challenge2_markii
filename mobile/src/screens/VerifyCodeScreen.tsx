@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button } from 'react-native';
-import { confirmSignUp, signIn } from 'aws-amplify/auth';
+import { confirmSignUp, signIn, resendSignUpCode } from 'aws-amplify/auth';
 
 export default function VerifyCodeScreen({ route, navigation }: any) {
-  const { email } = route.params || {};
+  const initialEmail = (route?.params?.email as string | undefined) || '';
+  const initialPassword = (route?.params?.password as string | undefined) || '';
+  const [email, setEmail] = useState<string>(initialEmail);
+  const [password] = useState<string>(initialPassword);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState('');
+  const [isResending, setIsResending] = useState(false);
 
   const append = (msg: string, payload?: any) => {
     const line = payload ? `${msg} ${JSON.stringify(payload)}` : msg;
@@ -22,7 +26,9 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
       append('confirm success');
       // Auto sign in
       try {
-        await signIn({ username: email, password: route.params?.password, options: { authFlowType: 'USER_PASSWORD_AUTH' as any } });
+        if (password) {
+          await signIn({ username: email, password, options: { authFlowType: 'USER_PASSWORD_AUTH' as any } });
+        }
         navigation.replace('Home');
       } catch (se: any) {
         append('auto signIn error', { name: se?.name, message: se?.message });
@@ -34,11 +40,30 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
     }
   };
 
+  const onResend = async () => {
+    if (!email) return;
+    setError(null);
+    setIsResending(true);
+    append('resend start', { email });
+    try {
+      await resendSignUpCode({ username: email });
+      append('resend success');
+    } catch (e: any) {
+      append('resend error', { name: e?.name, message: e?.message });
+      setError(e?.message ?? 'Resend failed');
+    } finally {
+      setIsResending(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, padding: 16 }}>
       <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Verify Code</Text>
+      <TextInput placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
       <TextInput placeholder="Code" value={code} onChangeText={setCode} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <Button title="Confirm" onPress={onConfirm} />
+      <Button title="Confirm" onPress={onConfirm} disabled={!email || !code} />
+      <View style={{ height: 8 }} />
+      <Button title={isResending ? 'Resending…' : 'Resend Code'} onPress={onResend} disabled={!email || isResending} />
       {error ? <Text style={{ color: 'red', marginTop: 12 }}>{error}</Text> : null}
       {log ? (
         <View style={{ marginTop: 12 }}>

@@ -41,6 +41,19 @@ export async function getUserById(userId: string) {
   return getClient().graphql({ query, variables: { id: userId }, authMode: 'userPool' });
 }
 
+export async function batchGetUsers(userIds: string[]) {
+  // Simple batched fetch; for Amplify GraphQL, issue queries sequentially to keep it simple for MVP
+  const results: Record<string, any> = {};
+  for (const uid of userIds) {
+    try {
+      const r: any = await getUserById(uid);
+      const u = r?.data?.getUser;
+      if (u) results[uid] = u;
+    } catch {}
+  }
+  return results;
+}
+
 export async function lookupUserIdByEmail(email: string) {
   const query = /* GraphQL */ `
     query LookupByEmail($emailLower: String!, $limit: Int) {

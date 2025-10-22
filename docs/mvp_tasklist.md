@@ -45,7 +45,17 @@
 
 ---
 
-## 🟦 Epic 5: Non-Functional Requirements
+## 🟦 Epic 5: Group Chat, Read Receipts, Notifications
+- [ ] Implement basic group chat (3+ users in one conversation)  
+- [ ] Add message read receipts (`READ` status)  
+- [ ] Implement in-app push notifications (Expo Notifications) for new messages when chat not focused  
+- [ ] Attribute messages by sender; show participants list and avatars in header  
+- [ ] Persist and sync group messages offline/online; optimistic UI for send  
+- [ ] **Emulator Test:** 3+ participants, offline/online transitions, rapid-fire (20+), background delivery  
+
+---
+
+## 🟦 Epic 6: Non-Functional Requirements
 - [ ] Ensure all API calls require Cognito JWT authentication  
 - [ ] Test optimistic UI latency (<200ms target)  
 - [ ] Validate message persistence across app restarts  
@@ -56,7 +66,7 @@
 
 ---
 
-## 🟦 Epic 6: Testing & QA
+## 🟦 Epic 7: Testing & QA
 - [ ] Write unit tests for authentication flow  
 - [ ] Write unit tests for message send/receive  
 - [ ] Write integration tests for AppSync + DynamoDB (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
@@ -68,9 +78,6 @@
 ---
 
 ## 🟦 Future Enhancements (Backlog)
-- [ ] Implement basic group chat (3+ users in one conversation)  
-- [ ] Add message read receipts (`READ` status)  
-- [ ] Implement push notifications (foreground in Expo Go)  
 - [ ] Add media/file sharing (S3 integration) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
 - [ ] Add typing indicators  
 - [ ] **Update `.gitignore` / `.cursorignore`:** Add notification service configs, S3 upload temp files, and experimental feature branches.  

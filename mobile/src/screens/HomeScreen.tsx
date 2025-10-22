@@ -1,7 +1,7 @@
 ﻿import React, { useState } from 'react';
 import { View, Button, Text, TextInput } from 'react-native';
 import ChatHeader from '../components/ChatHeader';
-import { getCurrentUser, signOut } from 'aws-amplify/auth';
+import { getCurrentUser, signOut, fetchUserAttributes, resendSignUpCode } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
 import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
 
@@ -12,6 +12,8 @@ export default function HomeScreen({ navigation }: any) {
   const [mySub, setMySub] = useState<string | null>(null);
   const [copyMsg, setCopyMsg] = useState<string | null>(null);
   const [online, setOnline] = useState<boolean>(true);
+  const [myEmail, setMyEmail] = useState<string | null>(null);
+  const [isEmailVerified, setIsEmailVerified] = useState<boolean | null>(null);
 
   React.useEffect(() => {
     let timer: any;
@@ -20,6 +22,28 @@ export default function HomeScreen({ navigation }: any) {
       try {
         const me = await getCurrentUser();
         setMySub(me.userId);
+        // Fetch verification status
+        try {
+          const attrs: any = await fetchUserAttributes();
+          const email = (attrs?.email as string) || null;
+          setMyEmail(email);
+          const verifiedRaw: any = (attrs as any)?.email_verified;
+          const verified = verifiedRaw === true || verifiedRaw === 'true';
+          setIsEmailVerified(verified);
+          if (!verified && email) {
+            navigation.setOptions({
+              headerRight: () => (
+                <Button
+                  title="Verify"
+                  onPress={async () => {
+                    try { await resendSignUpCode({ username: email }); } catch {}
+                    navigation.navigate('VerifyCode', { email });
+                  }}
+                />
+              ),
+            });
+          }
+        } catch {}
         await updateLastSeen(me.userId);
         // Heartbeat every 30s
         timer = setInterval(() => { updateLastSeen(me.userId).catch(() => {}); }, 30000);
@@ -81,6 +105,8 @@ export default function HomeScreen({ navigation }: any) {
           }}
           disabled={!otherUserSubInput}
         />
+        <View style={{ height: 8 }} />
+        <Button title="Open Conversations" onPress={() => navigation.navigate('Conversations')} />
         {lookupError ? <Text style={{ color: 'red', marginTop: 8 }}>{lookupError}</Text> : null}
         {lookupLog ? (
           <View style={{ marginTop: 8 }}>

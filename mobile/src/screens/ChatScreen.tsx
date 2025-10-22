@@ -1,11 +1,13 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
-import { View, FlatList, TextInput, Button, Text, Image } from 'react-native';
-import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping } from '../graphql/messages';
+import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal } from 'react-native';
+import { formatTimestamp } from '../utils/time';
+import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser } from '../graphql/messages';
 import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
 import { updateLastSeen } from '../graphql/users';
+import { updateParticipantLastRead } from '../graphql/conversations';
 
 function conversationIdFor(a: string, b: string) {
   return [a, b].sort().join('#');
@@ -27,12 +29,15 @@ export default function ChatScreen({ route }: any) {
   const retryTimerRef = useRef<any>(null);
   const isFocused = useIsFocused();
   const otherUserId = route.params?.otherUserSub as string;
+  const providedConversationId = route.params?.conversationId as string | undefined;
+  const [infoVisible, setInfoVisible] = useState(false);
+  const [infoText, setInfoText] = useState<string>('');
 
   useEffect(() => {
     (async () => {
       try {
         const me = await getCurrentUser();
-        const cid = conversationIdFor(me.userId, otherUserId);
+        const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
         // hydrate from cache first
         const cached = await AsyncStorage.getItem(`history:${cid}`);
         if (cached) {
@@ -42,7 +47,19 @@ export default function ChatScreen({ route }: any) {
         const res: any = await listMessagesCompat(cid, 25);
         const items = res.items;
         setNextToken(res.nextToken);
-        setMessages(items);
+        // Decorate with basic status icon based on receipts for 1:1
+        const decorated = await Promise.all(items.map(async (m: any) => {
+          try {
+            if (m.senderId === me.userId) {
+              const r: any = await getReceiptForMessageUser(m.id, otherUserId);
+              const receipt = r?.data?.messageReadsByMessageIdAndUserId?.items?.[0];
+              const state = receipt?.readAt ? 'read' : (receipt?.deliveredAt ? 'delivered' : 'sent');
+              return { ...m, __status: state };
+            }
+          } catch {}
+          return m;
+        }));
+        setMessages(decorated);
         await AsyncStorage.setItem(`history:${cid}`, JSON.stringify(items));
         // mark delivered for fetched messages not sent by me
         try {
@@ -134,6 +151,8 @@ export default function ChatScreen({ route }: any) {
           }
         };
         await drainOnce();
+        // Set lastReadAt on entering chat
+        try { await updateParticipantLastRead(cid, me.userId, new Date().toISOString()); } catch {}
       } catch (e: any) {
         setError(e?.message ?? 'Failed to load chat');
       }
@@ -239,13 +258,17 @@ export default function ChatScreen({ route }: any) {
         data={messages}
         keyExtractor={(item: any) => item.id}
         onEndReachedThreshold={0.3}
+        onScrollEndDrag={async () => {
+          try { const me = await getCurrentUser(); const cidNow = providedConversationId || conversationIdFor(me.userId, otherUserId); await updateParticipantLastRead(cidNow, me.userId, new Date().toISOString()); } catch {}
+        }}
         onEndReached={async () => {
           if (isLoadingMore || !nextToken) return;
           try {
             setIsLoadingMore(true);
             const me = await getCurrentUser();
-            const cid = conversationIdFor(me.userId, otherUserId);
-      const page: any = await listMessagesCompat(cid, 25, nextToken);
+            const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
+            const cidMore = providedConversationId || conversationIdFor(me.userId, otherUserId);
+      const page: any = await listMessagesCompat(cidMore, 25, nextToken);
       const older = page.items || [];
       setNextToken(page.nextToken);
             setMessages(prev => {
@@ -261,14 +284,53 @@ export default function ChatScreen({ route }: any) {
             {item.messageType === 'IMAGE' && item.attachments?.[0] ? (
               <Image source={{ uri: item.attachments[0] }} style={{ width: 200, height: 200, borderRadius: 8 }} />
             ) : (
-              <View>
-                <Text>{item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} {item._localStatus ? `(${item._localStatus})` : ''}</Text>
-                <Text style={{ color: '#6b7280', fontSize: 12 }}>{new Date(item.createdAt).toLocaleString()}</Text>
-              </View>
+              <TouchableOpacity onLongPress={async () => {
+                try {
+                  if (otherUserId && item.senderId) {
+                    const me = await getCurrentUser();
+                    if (item.senderId === me.userId) {
+                      const r: any = await getReceiptForMessageUser(item.id, otherUserId);
+                      const rec = r?.data?.messageReadsByMessageIdAndUserId?.items?.[0];
+                      const lines = [
+                        `Delivered: ${rec?.deliveredAt ? new Date(rec.deliveredAt).toLocaleString() : '—'}`,
+                        `Read: ${rec?.readAt ? new Date(rec.readAt).toLocaleString() : '—'}`,
+                      ];
+                      setInfoText(lines.join('\n'));
+                      setInfoVisible(true);
+                    } else {
+                      setInfoText('Message info available for your sent messages.');
+                      setInfoVisible(true);
+                    }
+                  }
+                } catch {
+                  setInfoText('Unable to load message info.');
+                  setInfoVisible(true);
+                }
+              }}>
+                <Text>
+                  {item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} {item._localStatus ? `(${item._localStatus})` : ''}
+                  {item.__status ? ' ' : ''}
+                  {item.__status === 'sent' ? '✓' : null}
+                  {item.__status === 'delivered' ? <Text style={{ color: '#6b7280' }}>✓✓</Text> : null}
+                  {item.__status === 'read' ? <Text style={{ color: '#3b82f6' }}>✓✓</Text> : null}
+                </Text>
+                <Text style={{ color: '#6b7280', fontSize: 12 }}>
+                  {formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
         )}
       />
+      <Modal visible={infoVisible} transparent animationType="fade" onRequestClose={() => setInfoVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '80%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Message info</Text>
+            <Text style={{ color: '#111827', marginBottom: 12 }}>{infoText}</Text>
+            <Button title="Close" onPress={() => setInfoVisible(false)} />
+          </View>
+        </View>
+      </Modal>
       {error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
       <View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
         <TextInput style={{ flex: 1, borderWidth: 1, padding: 8 }} value={input} onChangeText={onChangeInput} placeholder="Message" />
