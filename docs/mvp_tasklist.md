@@ -14,8 +14,8 @@
 ---
 
 ## 🟦 Epic 2: Messaging (One-on-One, Real-Time)
-- [ ] Define GraphQL schema for messages (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
-- [ ] Create DynamoDB table for messages (messageId, senderId, receiverId, content, timestamp, status) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Define GraphQL schema for messages (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
+- [x] Create DynamoDB table for messages (messageId, senderId, receiverId, content, timestamp, status) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
 - [ ] Implement GraphQL mutations for sending messages (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
 - [ ] Implement GraphQL subscriptions for receiving messages in real time (AppSync) (Reminder: set `$env:AWS_PROFILE='ciscodg@gmail'`)  
 - [ ] Build chat UI (message bubbles, input box, send button)  
