@@ -35,7 +35,7 @@ export function subscribeUserPresence(userId: string) {
 export async function getUserById(userId: string) {
   const query = /* GraphQL */ `
     query GetUser($id: ID!) {
-      getUser(id: $id) { id lastSeen status username avatar updatedAt }
+      getUser(id: $id) { id email username displayName lastSeen status avatar updatedAt }
     }
   `;
   return getClient().graphql({ query, variables: { id: userId }, authMode: 'userPool' });

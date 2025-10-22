@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
 import { updateLastSeen } from '../graphql/users';
-import { updateParticipantLastRead } from '../graphql/conversations';
+import { setMyLastRead, ensureDirectConversation } from '../graphql/conversations';
 
 function conversationIdFor(a: string, b: string) {
   return [a, b].sort().join('#');
@@ -18,6 +18,7 @@ export default function ChatScreen({ route }: any) {
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState('');
+  const messageInputRef = useRef<any>(null);
   const subRef = useRef<any>(null);
   const typingSubRef = useRef<any>(null);
   const receiptsSubRef = useRef<any>(null);
@@ -37,39 +38,13 @@ export default function ChatScreen({ route }: any) {
     (async () => {
       try {
         const me = await getCurrentUser();
-        const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
-        // hydrate from cache first
-        const cached = await AsyncStorage.getItem(`history:${cid}`);
-        if (cached) {
-          try { setMessages(JSON.parse(cached)); } catch {}
+        let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+        if (!cid) throw new Error('No conversation target');
+        // Ensure direct conversation exists when entering from 1:1 flow
+        if (!providedConversationId && otherUserId) {
+          try { await ensureDirectConversation(cid, me.userId, otherUserId); } catch {}
         }
-        // fetch latest page
-        const res: any = await listMessagesCompat(cid, 25);
-        const items = res.items;
-        setNextToken(res.nextToken);
-        // Decorate with basic status icon based on receipts for 1:1
-        const decorated = await Promise.all(items.map(async (m: any) => {
-          try {
-            if (m.senderId === me.userId) {
-              const r: any = await getReceiptForMessageUser(m.id, otherUserId);
-              const receipt = r?.data?.messageReadsByMessageIdAndUserId?.items?.[0];
-              const state = receipt?.readAt ? 'read' : (receipt?.deliveredAt ? 'delivered' : 'sent');
-              return { ...m, __status: state };
-            }
-          } catch {}
-          return m;
-        }));
-        setMessages(decorated);
-        await AsyncStorage.setItem(`history:${cid}`, JSON.stringify(items));
-        // mark delivered for fetched messages not sent by me
-        try {
-          for (const m of items) {
-            if (m.senderId !== me.userId) {
-              await markDelivered(m.id, me.userId);
-            }
-          }
-        } catch {}
-        // subscribe to new messages in this conversation
+        // subscribe to new messages in this conversation (first, to avoid missing messages)
         const subscribe = subscribeMessagesCompat(cid);
         const sub = subscribe({
           next: async (evt: any) => {
@@ -77,7 +52,9 @@ export default function ChatScreen({ route }: any) {
             // Opportunistic presence update on inbound activity
             try { const meNow = await getCurrentUser(); await updateLastSeen(meNow.userId); } catch {}
             setMessages(prev => {
-              const next = [m, ...prev];
+              // de-dup by id in case of overlap with initial fetch
+              const exists = prev.find((x: any) => x.id === m.id);
+              const next = exists ? prev : [m, ...prev];
               AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
               return next;
             });
@@ -101,6 +78,44 @@ export default function ChatScreen({ route }: any) {
           error: (e: any) => console.log('sub error', e),
         });
         subRef.current = sub;
+        // hydrate from cache next
+        const cached = await AsyncStorage.getItem(`history:${cid}`);
+        if (cached) {
+          try { setMessages(JSON.parse(cached)); } catch {}
+        }
+        // fetch latest page after subscription is active
+        const res: any = await listMessagesCompat(cid, 25);
+        const items = res.items;
+        setNextToken(res.nextToken);
+        // Decorate with basic status icon based on receipts for 1:1
+        const decorated = await Promise.all(items.map(async (m: any) => {
+          try {
+            if (m.senderId === me.userId) {
+              const r: any = await getReceiptForMessageUser(m.id, otherUserId);
+              const receipt = r?.data?.messageReadsByMessageIdAndUserId?.items?.[0];
+              const state = receipt?.readAt ? 'read' : (receipt?.deliveredAt ? 'delivered' : 'sent');
+              return { ...m, __status: state };
+            }
+          } catch {}
+          return m;
+        }));
+        setMessages(prev => {
+          const byId: Record<string, any> = {};
+          for (const m of prev) byId[m.id] = m;
+          for (const m of decorated) byId[m.id] = m;
+          const merged = Object.values(byId) as any[];
+          merged.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          AsyncStorage.setItem(`history:${cid}`, JSON.stringify(merged)).catch(() => {});
+          return merged;
+        });
+        // mark delivered for fetched messages not sent by me
+        try {
+          for (const m of items) {
+            if (m.senderId !== me.userId) {
+              await markDelivered(m.id, me.userId);
+            }
+          }
+        } catch {}
         // subscribe to typing events
         const typingSubscribe = subscribeTyping(cid);
         const typingSub = typingSubscribe({
@@ -152,7 +167,7 @@ export default function ChatScreen({ route }: any) {
         };
         await drainOnce();
         // Set lastReadAt on entering chat
-        try { await updateParticipantLastRead(cid, me.userId, new Date().toISOString()); } catch {}
+        try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
       } catch (e: any) {
         setError(e?.message ?? 'Failed to load chat');
       }
@@ -164,7 +179,7 @@ export default function ChatScreen({ route }: any) {
     try {
       setError(null);
       const me = await getCurrentUser();
-      const cid = conversationIdFor(me.userId, otherUserId);
+      const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
       const localId = `local-${Date.now()}`;
       const optimistic: any = {
         id: localId,
@@ -200,7 +215,7 @@ export default function ChatScreen({ route }: any) {
     try {
       setError(null);
       const me = await getCurrentUser();
-      const cid = conversationIdFor(me.userId, otherUserId);
+      const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
       const url = imageUrl.trim();
       if (!url) return;
       const localId = `local-img-${Date.now()}`;
@@ -241,7 +256,7 @@ export default function ChatScreen({ route }: any) {
       if (now - lastTypingSentRef.current > 1200) {
         lastTypingSentRef.current = now;
         const me = await getCurrentUser();
-        const cid = conversationIdFor(me.userId, otherUserId);
+        const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
         await sendTyping(cid, me.userId);
         // Opportunistic presence update on typing bursts (lightweight)
         try { await updateLastSeen(me.userId); } catch {}
@@ -259,7 +274,7 @@ export default function ChatScreen({ route }: any) {
         keyExtractor={(item: any) => item.id}
         onEndReachedThreshold={0.3}
         onScrollEndDrag={async () => {
-          try { const me = await getCurrentUser(); const cidNow = providedConversationId || conversationIdFor(me.userId, otherUserId); await updateParticipantLastRead(cidNow, me.userId, new Date().toISOString()); } catch {}
+          try { const me = await getCurrentUser(); const cidNow = providedConversationId || conversationIdFor(me.userId, otherUserId); await setMyLastRead(cidNow, me.userId, new Date().toISOString()); } catch {}
         }}
         onEndReached={async () => {
           if (isLoadingMore || !nextToken) return;
@@ -333,7 +348,16 @@ export default function ChatScreen({ route }: any) {
       </Modal>
       {error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
       <View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
-        <TextInput style={{ flex: 1, borderWidth: 1, padding: 8 }} value={input} onChangeText={onChangeInput} placeholder="Message" />
+        <TextInput
+          ref={messageInputRef}
+          style={{ flex: 1, borderWidth: 1, padding: 8 }}
+          value={input}
+          onChangeText={onChangeInput}
+          placeholder="Message"
+          returnKeyType="send"
+          blurOnSubmit={false}
+          onSubmitEditing={() => { onSend(); messageInputRef.current?.focus?.(); }}
+        />
         <Button title="Send" onPress={onSend} />
       </View>
       <View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>

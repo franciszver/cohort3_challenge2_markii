@@ -145,6 +145,26 @@ export function subscribeMessagesInConversation(conversationId: string) {
   return op.subscribe.bind(op);
 }
 
+function subscribeMessagesViaOnCreate(conversationId: string) {
+  const subscription = /* GraphQL */ `
+    subscription OnCreateMessage($filter: ModelSubscriptionMessageFilterInput) {
+      onCreateMessage(filter: $filter) {
+        id
+        conversationId
+        content
+        attachments
+        messageType
+        senderId
+        createdAt
+        updatedAt
+      }
+    }
+  `;
+  const variables = { filter: { conversationId: { eq: conversationId } } } as const;
+  const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
+  return op.subscribe.bind(op);
+}
+
 export async function createMessageRead(messageId: string, userId: string, readAtISO?: string, deliveredAtISO?: string) {
   const create = /* GraphQL */ `
     mutation CreateMessageRead($input: CreateMessageReadInput!) {
@@ -455,6 +475,29 @@ export function subscribeMessagesCompat(conversationId: string) {
   return (observer: any) => {
     let active: any = null;
     let fallbackActive: any = null;
+    let onCreateActive: any = null;
+
+    const startOnCreate = () => {
+      if (onCreateActive) return;
+      try {
+        const oc = subscribeMessagesViaOnCreate(conversationId);
+        onCreateActive = oc({
+          next: (evt: any) => {
+            const m = evt?.data?.onCreateMessage;
+            if (!m) return;
+            observer.next?.({ data: { onMessageInConversation: m } });
+          },
+          error: (err: any) => {
+            console.log('[messages] subscribe onCreate error', { message: err?.message });
+            // if onCreate fails too, try legacy VTL
+            startFallback();
+          },
+        });
+      } catch (e) {
+        console.log('[messages] subscribe onCreate threw; trying VTL');
+        startFallback();
+      }
+    };
 
     const startFallback = () => {
       if (fallbackActive) return;
@@ -481,19 +524,20 @@ export function subscribeMessagesCompat(conversationId: string) {
         },
         error: (_err: any) => {
           try { active?.unsubscribe?.(); } catch {}
-          console.log('[messages] subscribe root error; switching to VTL');
-          startFallback();
+          console.log('[messages] subscribe root error; switching to onCreate');
+          startOnCreate();
         },
       });
     } catch {
-      console.log('[messages] subscribe root threw; starting VTL');
-      startFallback();
+      console.log('[messages] subscribe root threw; starting onCreate');
+      startOnCreate();
     }
 
     return {
       unsubscribe: () => {
         try { active?.unsubscribe?.(); } catch {}
         try { fallbackActive?.unsubscribe?.(); } catch {}
+        try { onCreateActive?.unsubscribe?.(); } catch {}
       },
     };
   };

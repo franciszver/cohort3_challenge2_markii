@@ -1,54 +1,133 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Button, FlatList, TouchableOpacity } from 'react-native';
-import { getCurrentUser } from 'aws-amplify/auth';
-import { listConversationsForUser, getConversation, listParticipantsForConversation } from '../graphql/conversations';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput } from 'react-native';
+import { getCurrentUser, signOut } from 'aws-amplify/auth';
+import * as Clipboard from 'expo-clipboard';
+import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation } from '../graphql/conversations';
 import { batchGetUsers } from '../graphql/users';
 import { getLatestMessageInConversation } from '../graphql/messages';
 import { formatTimestamp } from '../utils/time';
+import { useFocusEffect } from '@react-navigation/native';
+import { generateClient } from 'aws-amplify/api';
+import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
 export default function ConversationListScreen({ navigation }: any) {
   const [items, setItems] = useState<any[]>([]);
   const [nextToken, setNextToken] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [showId, setShowId] = useState(false);
+  const [myId, setMyId] = useState<string>('');
+  const [showSolo, setShowSolo] = useState(false);
+  const [soloOtherId, setSoloOtherId] = useState('');
+  const [soloBusy, setSoloBusy] = useState(false);
+  const notifySubsRef = useRef<any[]>([]);
+  const lastNotifyAtRef = useRef<Record<string, number>>({});
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setError(null);
-        const me = await getCurrentUser();
-        const res: any = await listConversationsForUser(me.userId, 20);
+  const load = useCallback(async () => {
+    try {
+      setError(null);
+      const me = await getCurrentUser();
+      setMyId(me.userId);
+      // Header actions
+      navigation.setOptions({
+        headerRight: () => (
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button title="My ID" onPress={() => setShowId(true)} />
+            <Button title="Solo" onPress={() => setShowSolo(true)} />
+            <Button title="Sign Out" onPress={async () => { try { await signOut(); } catch {} navigation.replace('Auth'); }} />
+          </View>
+        ),
+      });
+      // Fetch ALL conversations (paginate) and capture my lastReadAt per conversation
+      const convIdsSet = new Set<string>();
+      const myLastRead: Record<string, string | undefined> = {};
+      let next: string | undefined = undefined;
+      do {
+        const res: any = await listConversationsForUser(me.userId, 50, next);
         const parts = res?.data?.conversationParticipantsByUserIdAndConversationId;
-        const convIds = (parts?.items || []).map((p: any) => p.conversationId);
-        const convs: any[] = [];
-        for (const id of convIds) {
-          const r: any = await getConversation(id);
-          if (r?.data?.getConversation) {
-            const c = r.data.getConversation;
-            // latest message preview
-            const latest = await getLatestMessageInConversation(c.id);
-            // fetch participant subset (first 3 for avatars) and lastReadAt for me
-            const partsRes: any = await listParticipantsForConversation(c.id, 3);
-            const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-            const userMap = await batchGetUsers(parts.map((p: any) => p.userId));
-            // compute unread: if I have a lastReadAt, compare to latest message createdAt
-            let unread = 0;
-            try {
-              const myPart = parts.find((p: any) => p.userId === me.userId);
-              const lastRead = myPart?.lastReadAt;
-              if (latest?.createdAt && lastRead) {
-                unread = new Date(latest.createdAt).getTime() > new Date(lastRead).getTime() ? 1 : 0;
-              } else if (latest?.createdAt && !lastRead) {
-                unread = 1;
-              }
-            } catch {}
-            convs.push({ ...c, _latest: latest, _participants: parts, _users: userMap, _unread: unread });
-          }
+        (parts?.items || []).forEach((p: any) => {
+          if (p?.conversationId) convIdsSet.add(p.conversationId);
+          if (p?.conversationId) myLastRead[p.conversationId] = p?.lastReadAt;
+        });
+        next = parts?.nextToken || undefined;
+      } while (next);
+      const convIds = Array.from(convIdsSet);
+      const convs: any[] = [];
+      // Set up foreground notifications for new messages in these conversations
+      try {
+        // Clear previous subs
+        notifySubsRef.current.forEach(s => { try { s?.unsubscribe?.(); } catch {} });
+        notifySubsRef.current = [];
+        // Configure notification handler/channel (idempotent)
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: false, shouldSetBadge: false }),
+        });
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('default', { name: 'default', importance: Notifications.AndroidImportance.HIGH });
         }
-        setItems(convs);
-        setNextToken(parts?.nextToken);
-      } catch (e: any) { setError(e?.message ?? 'Load failed'); }
-    })();
-  }, []);
+        const client: any = generateClient();
+        const subGql = /* GraphQL */ `
+          subscription OnCreateMessage($filter: ModelSubscriptionMessageFilterInput) {
+            onCreateMessage(filter: $filter) { id conversationId content senderId createdAt }
+          }
+        `;
+        for (const id of convIds) {
+          const op = client.graphql({ query: subGql, variables: { filter: { conversationId: { eq: id } } }, authMode: 'userPool' }) as any;
+          const sub = op.subscribe({
+            next: async (evt: any) => {
+              const m = evt?.data?.onCreateMessage;
+              if (!m) return;
+              // Throttle per conversation to avoid spam when many arrive
+              const now = Date.now();
+              const last = lastNotifyAtRef.current[id] || 0;
+              if (now - last < 1500) return;
+              lastNotifyAtRef.current[id] = now;
+              try {
+                await Notifications.scheduleNotificationAsync({
+                  content: { title: 'New message', body: m.content || 'New message received' },
+                  trigger: null,
+                });
+              } catch {}
+            },
+            error: () => {},
+          });
+          notifySubsRef.current.push(sub);
+        }
+      } catch {}
+      for (const id of convIds) {
+        const r: any = await getConversation(id);
+        if (r?.data?.getConversation) {
+          const c = r.data.getConversation;
+          // latest message preview
+          const latest = await getLatestMessageInConversation(c.id);
+          // fetch participant subset (first 3 for avatars)
+          const partsRes: any = await listParticipantsForConversation(c.id, 3);
+          const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+          const userMap = await batchGetUsers(parts.map((p: any) => p.userId));
+          // compute unread from myLastRead map
+          let unread = 0;
+          const lastRead = myLastRead[c.id];
+          if (latest?.createdAt && lastRead) {
+            unread = new Date(latest.createdAt).getTime() > new Date(lastRead).getTime() ? 1 : 0;
+          } else if (latest?.createdAt && !lastRead) {
+            unread = 1;
+          }
+          convs.push({ ...c, _latest: latest, _participants: parts, _users: userMap, _unread: unread });
+        }
+      }
+      // Sort by latest activity (latest message createdAt desc)
+      convs.sort((a: any, b: any) => {
+        const at = a?._latest?.createdAt ? new Date(a._latest.createdAt).getTime() : 0;
+        const bt = b?._latest?.createdAt ? new Date(b._latest.createdAt).getTime() : 0;
+        return bt - at;
+      });
+      setItems(convs);
+      setNextToken(undefined);
+    } catch (e: any) { setError(e?.message ?? 'Load failed'); }
+  }, [navigation]);
+
+  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); return () => { notifySubsRef.current.forEach(s => { try { s?.unsubscribe?.(); } catch {} }); }; }, [load]));
 
   return (
     <View style={{ flex: 1, padding: 12 }}>
@@ -73,7 +152,9 @@ export default function ConversationListScreen({ navigation }: any) {
                 </View>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '600' }}>{item.name || (item.isGroup ? 'Group' : 'Chat')}</Text>
+                <Text style={{ fontWeight: '600' }}>
+                  {item.name || (item.isGroup ? 'Group' : (item._users?.[item._participants?.find((p:any)=>true)?.userId]?.displayName || item._users?.[item._participants?.find((p:any)=>true)?.userId]?.email || 'Chat'))}
+                </Text>
                 <Text style={{ color: '#6b7280' }} numberOfLines={1}>
                   {(item._latest?.content || '[no messages]')} · {item._latest?.createdAt ? formatTimestamp(item._latest.createdAt) : ''}
                 </Text>
@@ -85,6 +166,58 @@ export default function ConversationListScreen({ navigation }: any) {
           </TouchableOpacity>
         )}
       />
+      <Modal visible={showId} transparent animationType="fade" onRequestClose={() => setShowId(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Your ID</Text>
+            <Text selectable style={{ marginBottom: 12 }}>{myId}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <Button title="Copy" onPress={async () => { try { await Clipboard.setStringAsync(myId); } catch {} setShowId(false); }} />
+              <Button title="Close" onPress={() => setShowId(false)} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={showSolo} transparent animationType="fade" onRequestClose={() => setShowSolo(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Start Direct Chat</Text>
+            <Text style={{ color: '#6b7280', marginBottom: 8 }}>Paste the other user's ID (sub):</Text>
+            <View style={{ borderWidth: 1, padding: 8, marginBottom: 12 }}>
+              <TextInput
+                placeholder="Other user's ID"
+                value={soloOtherId}
+                onChangeText={setSoloOtherId}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <Button title="Cancel" onPress={() => setShowSolo(false)} />
+              <Button
+                title={soloBusy ? 'Starting…' : 'Start'}
+                onPress={async () => {
+                  if (!soloOtherId.trim()) return;
+                  try {
+                    setSoloBusy(true);
+                    const me = await getCurrentUser();
+                    const a = me.userId;
+                    const b = soloOtherId.trim();
+                    const conversationId = [a, b].sort().join('#');
+                    await ensureDirectConversation(conversationId, a, b);
+                    setShowSolo(false);
+                    setSoloBusy(false);
+                    navigation.navigate('Chat', { conversationId });
+                  } catch {
+                    setSoloBusy(false);
+                  }
+                }}
+                disabled={soloBusy || !soloOtherId.trim()}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

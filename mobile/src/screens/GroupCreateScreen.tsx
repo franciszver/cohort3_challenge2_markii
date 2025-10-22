@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, TextInput, Button, Text } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { createConversation } from '../graphql/conversations';
 
@@ -12,7 +13,12 @@ export default function GroupCreateScreen({ navigation }: any) {
     try {
       setError(null);
       const me = await getCurrentUser();
-      const ids = [me.userId, ...participantIds.split(',').map(s => s.trim()).filter(Boolean)];
+      const tokens = participantIds
+        .split(/[\s,;]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const dedup = Array.from(new Set(tokens));
+      const ids = [me.userId, ...dedup];
       const conv = await createConversation(name || undefined, true, ids);
       navigation.replace('Chat', { conversationId: conv.id });
     } catch (e: any) {
@@ -24,7 +30,19 @@ export default function GroupCreateScreen({ navigation }: any) {
     <View style={{ flex: 1, padding: 16 }}>
       <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>New Group</Text>
       <TextInput placeholder="Group name" value={name} onChangeText={setName} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <TextInput placeholder="Participant IDs (comma-separated)" value={participantIds} onChangeText={setParticipantIds} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} autoCapitalize="none" />
+      <TextInput
+        placeholder="Participant IDs (paste comma/newline separated)"
+        value={participantIds}
+        onChangeText={setParticipantIds}
+        style={{ borderWidth: 1, padding: 8, marginBottom: 8, minHeight: 80, textAlignVertical: 'top' }}
+        autoCapitalize="none"
+        autoCorrect={false}
+        multiline
+      />
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+        <Button title="Paste" onPress={async () => { try { const v = await Clipboard.getStringAsync(); setParticipantIds(prev => (prev ? `${prev}\n${v}` : v)); } catch {} }} />
+        <Button title="Clear" onPress={() => setParticipantIds('')} />
+      </View>
       <Button title="Create" onPress={onCreate} />
       {error ? <Text style={{ color: 'red', marginTop: 8 }}>{error}</Text> : null}
     </View>

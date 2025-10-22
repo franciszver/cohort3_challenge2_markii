@@ -28,8 +28,10 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
       try {
         if (password) {
           await signIn({ username: email, password, options: { authFlowType: 'USER_PASSWORD_AUTH' as any } });
+          navigation.replace('Conversations');
+        } else {
+          navigation.replace('Auth');
         }
-        navigation.replace('Home');
       } catch (se: any) {
         append('auto signIn error', { name: se?.name, message: se?.message });
         navigation.replace('Auth');

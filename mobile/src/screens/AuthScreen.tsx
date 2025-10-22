@@ -31,7 +31,7 @@ export default function AuthScreen({ navigation }: any) {
         const user = await getCurrentUser();
         appendLog('session detected for user', user);
         setIsSignedIn(true);
-        navigation.replace('Home');
+        navigation.replace('Conversations');
       } catch {
         setIsSignedIn(false);
       }
@@ -82,7 +82,7 @@ export default function AuthScreen({ navigation }: any) {
       } catch (se) {
         appendLog('fetchAuthSession error', se as any);
       }
-      navigation.replace('Home');
+      navigation.replace('Conversations');
     } catch (e: any) {
       appendLog('signIn error', { name: e?.name, message: e?.message, code: e?.code, raw: e, stack: e?.stack, cause: e?.cause });
       appendLog('env extra', (Constants.expoConfig?.extra || Constants.manifest?.extra || {}));
