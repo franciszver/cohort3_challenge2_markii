@@ -3,13 +3,15 @@ import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput } from
 import { getCurrentUser, signOut } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
 import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation } from '../graphql/conversations';
-import { batchGetUsers } from '../graphql/users';
+import { batchGetUsersCached } from '../graphql/users';
 import { getLatestMessageInConversation } from '../graphql/messages';
 import { formatTimestamp } from '../utils/time';
 import { useFocusEffect } from '@react-navigation/native';
 import { generateClient } from 'aws-amplify/api';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { getFlags } from '../utils/flags';
+import { subscribeToasts } from '../utils/toast';
 
 export default function ConversationListScreen({ navigation }: any) {
   const [items, setItems] = useState<any[]>([]);
@@ -20,11 +22,19 @@ export default function ConversationListScreen({ navigation }: any) {
   const [showSolo, setShowSolo] = useState(false);
   const [soloOtherId, setSoloOtherId] = useState('');
   const [soloBusy, setSoloBusy] = useState(false);
+  const [banner, setBanner] = useState<{ conversationId: string; preview: string } | null>(null);
   const notifySubsRef = useRef<any[]>([]);
   const lastNotifyAtRef = useRef<Record<string, number>>({});
+  const toastUnsubRef = useRef<null | (() => void)>(null);
 
+  const isLoadingRef = useRef(false);
+  const lastLoadedAtRef = useRef(0);
   const load = useCallback(async () => {
     try {
+      if (isLoadingRef.current) return;
+      const now = Date.now();
+      if (now - lastLoadedAtRef.current < 1500) return; // staleness guard
+      isLoadingRef.current = true;
       setError(null);
       const me = await getCurrentUser();
       setMyId(me.userId);
@@ -78,6 +88,16 @@ export default function ConversationListScreen({ navigation }: any) {
             onCreateMessage(filter: $filter) { id conversationId content senderId createdAt }
           }
         `;
+        // Global notification rate limit
+        const { NOTIFY_RATE_LIMIT_PER_MINUTE } = getFlags();
+        const windowMs = 60 * 1000;
+        const sentTimes: number[] = [];
+        function canSendNow() {
+          const cutoff = Date.now() - windowMs;
+          while (sentTimes.length && sentTimes[0] < cutoff) sentTimes.shift();
+          return sentTimes.length < NOTIFY_RATE_LIMIT_PER_MINUTE;
+        }
+
         for (const id of convIds) {
           const op = client.graphql({ query: subGql, variables: { filter: { conversationId: { eq: id } } }, authMode: 'userPool' }) as any;
           const sub = op.subscribe({
@@ -89,12 +109,20 @@ export default function ConversationListScreen({ navigation }: any) {
               const last = lastNotifyAtRef.current[id] || 0;
               if (now - last < 1500) return;
               lastNotifyAtRef.current[id] = now;
+              if (!canSendNow()) return;
+              sentTimes.push(now);
               try {
                 await Notifications.scheduleNotificationAsync({
                   content: { title: 'New message', body: m.content || 'New message received' },
                   trigger: null,
                 });
               } catch {}
+              // In-app banner for quick attention when user is not in chat
+              setBanner({ conversationId: id, preview: m.content || 'New message' });
+              // Auto-hide after a short delay
+              setTimeout(() => {
+                setBanner(curr => (curr && curr.conversationId === id ? null : curr));
+              }, 4000);
             },
             error: () => {},
           });
@@ -110,7 +138,7 @@ export default function ConversationListScreen({ navigation }: any) {
           // fetch participant subset (first 3 for avatars)
           const partsRes: any = await listParticipantsForConversation(c.id, 3);
           const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-          const userMap = await batchGetUsers(parts.map((p: any) => p.userId));
+          const userMap = await batchGetUsersCached(parts.map((p: any) => p.userId));
           // compute unread from myLastRead map
           let unread = 0;
           const lastRead = myLastRead[c.id];
@@ -130,11 +158,26 @@ export default function ConversationListScreen({ navigation }: any) {
       });
       setItems(convs);
       setNextToken(undefined);
+      lastLoadedAtRef.current = Date.now();
     } catch (e: any) { setError(e?.message ?? 'Load failed'); }
+    finally { isLoadingRef.current = false; }
   }, [navigation]);
 
   useEffect(() => { load(); }, [load]);
-  useFocusEffect(useCallback(() => { load(); return () => { notifySubsRef.current.forEach(s => { try { s?.unsubscribe?.(); } catch {} }); }; }, [load]));
+  useFocusEffect(useCallback(() => {
+    load();
+    // subscribe to toast bus
+    try { toastUnsubRef.current?.(); } catch {}
+    toastUnsubRef.current = subscribeToasts((msg) => {
+      setBanner({ conversationId: '__toast__', preview: msg });
+      setTimeout(() => setBanner(curr => (curr && curr.conversationId === '__toast__' ? null : curr)), 4000);
+    });
+    return () => {
+      notifySubsRef.current.forEach(s => { try { s?.unsubscribe?.(); } catch {} });
+      try { toastUnsubRef.current?.(); } catch {}
+      toastUnsubRef.current = null;
+    };
+  }, [load]));
 
   return (
     <View style={{ flex: 1, padding: 12 }}>
@@ -146,6 +189,11 @@ export default function ConversationListScreen({ navigation }: any) {
       <FlatList
         data={items}
         keyExtractor={(item: any) => item.id}
+        removeClippedSubviews
+        initialNumToRender={16}
+        windowSize={7}
+        maxToRenderPerBatch={12}
+        updateCellsBatchingPeriod={50}
         renderItem={({ item }) => (
           <TouchableOpacity onPress={() => navigation.navigate('Chat', { conversationId: item.id })}>
             <View style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
@@ -173,6 +221,21 @@ export default function ConversationListScreen({ navigation }: any) {
           </TouchableOpacity>
         )}
       />
+      {banner ? (
+        <TouchableOpacity
+          onPress={() => {
+            const id = banner.conversationId;
+            setBanner(null);
+            navigation.navigate('Chat', { conversationId: id });
+          }}
+          style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 10 }}
+        >
+          <View style={{ backgroundColor: '#111827', padding: 12, borderRadius: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8 }}>
+            <Text style={{ color: 'white', fontWeight: '600' }}>New message</Text>
+            <Text style={{ color: '#d1d5db' }} numberOfLines={1}>{banner.preview}</Text>
+          </View>
+        </TouchableOpacity>
+      ) : null}
       <Modal visible={showId} transparent animationType="fade" onRequestClose={() => setShowId(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
@@ -210,11 +273,12 @@ export default function ConversationListScreen({ navigation }: any) {
                     const me = await getCurrentUser();
                     const a = me.userId;
                     const b = soloOtherId.trim();
-                    const conversationId = [a, b].sort().join('#');
-                    await ensureDirectConversation(conversationId, a, b);
+                    // Create a fresh unique 1:1 conversation id to start a new thread
+                    const freshId = `${[a, b].sort().join('#')}-${Date.now()}`;
+                    await ensureDirectConversation(freshId, a, b);
                     setShowSolo(false);
                     setSoloBusy(false);
-                    navigation.navigate('Chat', { conversationId });
+                    navigation.navigate('Chat', { conversationId: freshId });
                   } catch {
                     setSoloBusy(false);
                   }

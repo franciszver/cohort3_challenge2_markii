@@ -1,4 +1,5 @@
 ﻿import { generateClient } from 'aws-amplify/api';
+import { getFlags } from '../utils/flags';
 
 // Lazily create the GraphQL client after Amplify has been configured
 let _client: any = null;
@@ -20,6 +21,8 @@ function safe(obj: unknown) {
 let didLogQueryFields = false;
 async function logQueryFieldsOnce() {
   if (didLogQueryFields) return;
+  const { ENABLE_INTROSPECTION } = getFlags();
+  if (!ENABLE_INTROSPECTION) return;
   didLogQueryFields = true;
   const introspect = /* GraphQL */ `
     query IntrospectQueryFields {
@@ -29,9 +32,9 @@ async function logQueryFieldsOnce() {
   try {
     const res: any = await getClient().graphql({ query: introspect, authMode: 'userPool' });
     const names = (res?.data?.__schema?.queryType?.fields || []).map((f: any) => f?.name).filter(Boolean);
-    console.log('[messages] schema Query fields', names);
+    if (getFlags().DEBUG_LOGS) console.log('[messages] schema Query fields', names);
   } catch (ie) {
-    console.log('[messages] schema introspection failed', { message: (ie as any)?.message, raw: safe(ie) });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] schema introspection failed', { message: (ie as any)?.message, raw: safe(ie) });
   }
 }
 
@@ -341,18 +344,18 @@ export async function listMessagesCompat(
   nextToken?: string
 ) {
   try {
-    console.log('[messages] listMessagesCompat root start', { conversationId, limit, nextToken });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root start', { conversationId, limit, nextToken });
     const res: any = await listMessagesByConversation(conversationId, limit, nextToken);
     if (res?.errors?.length) {
-      console.log('[messages] listMessagesCompat root GraphQL errors', safe(res.errors));
+      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root GraphQL errors', safe(res.errors));
       throw new Error(res.errors?.[0]?.message || 'root returned errors');
     }
     const page = res?.data?.messagesByConversationIdAndCreatedAt;
     if (!page || !page.items) throw new Error('root listMessages unavailable');
-    console.log('[messages] listMessagesCompat root ok', { count: page.items.length, nextToken: page.nextToken });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root ok', { count: page.items.length, nextToken: page.nextToken });
     return { items: page.items, nextToken: page.nextToken };
   } catch (e) {
-    console.log('[messages] listMessagesCompat root failed, trying VTL', {
+    if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root failed, trying VTL', {
       name: (e as any)?.name,
       code: (e as any)?.code,
       message: (e as any)?.message,
@@ -366,14 +369,14 @@ export async function listMessagesCompat(
     try {
       const res: any = await listMessagesByFilter(conversationId, limit, nextToken);
       if (res?.errors?.length) {
-        console.log('[messages] listMessagesCompat generic filter GraphQL errors', safe(res.errors));
+        if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat generic filter GraphQL errors', safe(res.errors));
       }
       const page = res?.data?.listMessages;
       const items = page?.items || [];
-      console.log('[messages] listMessagesCompat generic filter ok', { count: items.length, nextToken: page?.nextToken });
+      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat generic filter ok', { count: items.length, nextToken: page?.nextToken });
       return { items, nextToken: page?.nextToken };
     } catch (ge) {
-      console.log('[messages] listMessagesCompat generic filter failed, trying VTL', {
+      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat generic filter failed, trying VTL', {
         name: (ge as any)?.name,
         code: (ge as any)?.code,
         message: (ge as any)?.message,
@@ -386,14 +389,14 @@ export async function listMessagesCompat(
     try {
       const res: any = await listMessagesVtl(conversationId, limit, nextToken);
       if (res?.errors?.length) {
-        console.log('[messages] listMessagesCompat VTL GraphQL errors', safe(res.errors));
+        if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat VTL GraphQL errors', safe(res.errors));
       }
       const page = res?.data?.listMessages;
       const items = (page?.items || []).map(mapVtlMessageToRootShape);
-      console.log('[messages] listMessagesCompat VTL ok', { count: items.length, nextToken: page?.nextToken });
+      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat VTL ok', { count: items.length, nextToken: page?.nextToken });
       return { items, nextToken: page?.nextToken };
     } catch (ve) {
-      console.log('[messages] listMessagesCompat VTL failed', {
+      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat VTL failed', {
         name: (ve as any)?.name,
         code: (ve as any)?.code,
         message: (ve as any)?.message,
@@ -412,17 +415,17 @@ export async function sendTextMessageCompat(
   senderId: string
 ) {
   try {
-    console.log('[messages] sendTextMessageCompat root start', { conversationId, contentLen: content?.length ?? 0 });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root start', { conversationId, contentLen: content?.length ?? 0 });
     const res: any = await createTextMessage(conversationId, content, senderId);
     const msg = res?.data?.createMessage;
     if (!msg) throw new Error('root send unavailable');
-    console.log('[messages] sendTextMessageCompat root ok', { id: msg?.id });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root ok', { id: msg?.id });
     return msg;
   } catch (e) {
-    console.log('[messages] sendTextMessageCompat root failed, trying VTL', { message: (e as any)?.message });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root failed, trying VTL', { message: (e as any)?.message });
     const res: any = await sendMessageVtl(conversationId, content);
     const mapped = mapVtlMessageToRootShape(res?.data?.sendMessage || {});
-    console.log('[messages] sendTextMessageCompat VTL ok', { id: mapped?.id });
+    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat VTL ok', { id: mapped?.id });
     return mapped;
   }
 }
@@ -476,17 +479,17 @@ export function subscribeMessagesCompat(conversationId: string) {
       const primary = subscribeMessagesInConversation(conversationId);
       active = primary({
         next: (evt: any) => {
-          try { console.log('[messages] subscribe root event', { id: evt?.data?.onMessageInConversation?.id }); } catch {}
+          try { if (getFlags().DEBUG_LOGS) console.log('[messages] subscribe root event', { id: evt?.data?.onMessageInConversation?.id }); } catch {}
           observer.next?.(evt);
         },
         error: (_err: any) => {
           try { active?.unsubscribe?.(); } catch {}
-          console.log('[messages] subscribe root error; switching to onCreate');
+          if (getFlags().DEBUG_LOGS) console.log('[messages] subscribe root error; switching to onCreate');
           startOnCreate();
         },
       });
     } catch {
-      console.log('[messages] subscribe root threw; starting onCreate');
+      if (getFlags().DEBUG_LOGS) console.log('[messages] subscribe root threw; starting onCreate');
       startOnCreate();
     }
 

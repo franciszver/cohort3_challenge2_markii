@@ -27,6 +27,10 @@ const config: ExpoConfig = {
     COGNITO_CLIENT_ID: process.env.COGNITO_CLIENT_ID,
     COGNITO_IDENTITY_POOL_ID: process.env.COGNITO_IDENTITY_POOL_ID,
     APPSYNC_ENDPOINT: process.env.APPSYNC_ENDPOINT,
+    DEBUG_LOGS: process.env.DEBUG_LOGS ?? 'false',
+    ENABLE_INTROSPECTION: process.env.ENABLE_INTROSPECTION ?? 'false',
+    PRESENCE_HEARTBEAT_MS: process.env.PRESENCE_HEARTBEAT_MS ?? '30000',
+    NOTIFY_RATE_LIMIT_PER_MINUTE: process.env.NOTIFY_RATE_LIMIT_PER_MINUTE ?? '10',
   },
 };
 

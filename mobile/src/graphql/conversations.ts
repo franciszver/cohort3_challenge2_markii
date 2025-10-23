@@ -106,4 +106,26 @@ export async function ensureDirectConversation(conversationId: string, meId: str
   }
 }
 
+export async function deleteConversationById(id: string, _version?: number) {
+  const mutation = /* GraphQL */ `
+    mutation DeleteConversation($input: DeleteConversationInput!) {
+      deleteConversation(input: $input) { id }
+    }
+  `;
+  const input: any = { id };
+  if (_version != null) input._version = _version;
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+}
+
+export function subscribeConversationDeleted(conversationId: string) {
+  const subscription = /* GraphQL */ `
+    subscription OnDeleteConversation($filter: ModelSubscriptionConversationFilterInput) {
+      onDeleteConversation(filter: $filter) { id }
+    }
+  `;
+  const variables = { filter: { id: { eq: conversationId } } } as const;
+  const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
+  return op.subscribe.bind(op);
+}
+
 
