@@ -10,7 +10,7 @@ $env:AWS_PROFILE='ciscodg@gmail'
 ```
 
 #### Register schema
-- In the AppSync console, create or select your API and paste `schema.graphql` into the Schema editor.
+- In the AppSync console, create or select your API and paste the canonical root schema from `schema.graphql` (repo root) into the Schema editor.
 - Set default authorization to Cognito User Pools and select your User Pool.
 - Create resolvers for:
   - `Query.getUserProfile`
