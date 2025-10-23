@@ -79,22 +79,7 @@ export async function getLatestMessageInConversation(conversationId: string) {
   return res?.data?.messagesByConversationIdAndCreatedAt?.items?.[0] || null;
 }
 
-export async function countMessagesAfter(conversationId: string, afterISO: string, sampleLimit = 50) {
-  const query = /* GraphQL */ `
-    query CountAfter($conversationId: String!, $after: ModelStringKeyConditionInput, $limit: Int) {
-      messagesByConversationIdAndCreatedAt(conversationId: $conversationId, createdAt: $after, limit: $limit, sortDirection: ASC) {
-        items { id }
-        nextToken
-      }
-    }
-  `;
-  const variables = { conversationId, after: { gt: afterISO }, limit: sampleLimit } as const;
-  const res: any = await getClient().graphql({ query, variables, authMode: 'userPool' });
-  const page = res?.data?.messagesByConversationIdAndCreatedAt;
-  const count = page?.items?.length || 0;
-  const more = !!page?.nextToken;
-  return { count, more };
-}
+// removed unused countMessagesAfter
 
 export async function createTextMessage(
   conversationId: string,
@@ -239,35 +224,7 @@ export async function getReceiptForMessageUser(messageId: string, userId: string
   return getClient().graphql({ query, variables: { messageId, userId: { eq: userId }, limit: 1 }, authMode: 'userPool' });
 }
 
-export async function createImageMessage(
-  conversationId: string,
-  imageUrl: string,
-  senderId: string
-) {
-  const mutation = /* GraphQL */ `
-    mutation CreateMessage($input: CreateMessageInput!) {
-      createMessage(input: $input) {
-        id
-        conversationId
-        content
-        attachments
-        messageType
-        senderId
-        createdAt
-        updatedAt
-      }
-    }
-  `;
-  const input = {
-    conversationId,
-    content: '',
-    senderId,
-    messageType: 'IMAGE',
-    attachments: [imageUrl],
-    createdAt: new Date().toISOString(),
-  } as const;
-  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
-}
+// removed unused createImageMessage (image URL sending reuses sendTextMessageCompat)
 
 export async function sendTyping(conversationId: string, userId: string) {
   const mutation = /* GraphQL */ `

@@ -1,7 +1,7 @@
 ﻿import { generateClient } from 'aws-amplify/api';
 
-let _client: ReturnType<typeof generateClient> | null = null;
-function getClient() {
+let _client: any = null;
+function getClient(): any {
   if (_client == null) {
     _client = generateClient();
   }

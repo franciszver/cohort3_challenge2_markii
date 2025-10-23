@@ -60,7 +60,14 @@ export default function ConversationListScreen({ navigation }: any) {
         notifySubsRef.current = [];
         // Configure notification handler/channel (idempotent)
         Notifications.setNotificationHandler({
-          handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: false, shouldSetBadge: false }),
+          handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+            // align with newer NotificationBehavior fields
+            shouldShowBanner: true,
+            shouldShowList: true,
+          } as any),
         });
         if (Platform.OS === 'android') {
           await Notifications.setNotificationChannelAsync('default', { name: 'default', importance: Notifications.AndroidImportance.HIGH });
