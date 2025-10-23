@@ -10,15 +10,7 @@ Automate documentation updates on dev pushes: analyze code changes, update docs 
 ### 1) Verify and create _docs structure (agent)
 
 - Ensure `_docs/` exists; create if missing.
-- Detect numeric subfolders (names matching `^[0-9]+_.*# BackgroundAgentSetup.md
-
-## Goal
-
-Automate documentation updates on dev pushes: analyze code changes, update docs in `_docs/1_FORREVIEW`, and halt on errors via `_docs/_BATCHERR.md` until resolved.
-
-## Steps
-
-) from the current `_docs/` directory (template = what’s in the repo at runtime).
+- Detect numeric subfolders (names matching `^[0-9]+_.*`) from the current `_docs/` directory (template = what’s in the repo at runtime).
 
 - Ensure the following always exist (create if missing):
 - `_docs/1_FORREVIEW/` (input and output)
@@ -33,7 +25,7 @@ Automate documentation updates on dev pushes: analyze code changes, update docs 
 - `timeout-minutes: 12`
 - Early-exit step if `_docs/_BATCHERR.md` exists
 - Steps: checkout, verify `_docs/1_FORREVIEW`, Node setup, deps install, run `scripts/agent/index.js`, commit changes
-- Commit `file_pattern`: `_docs/1_FORREVIEW/** _docs/_cache/** _docs/_BATCHERR.md`
+- Commit `file_pattern`: `_docs/1_FORREVIEW/**/*.md _docs/0_cache/**/*.md _docs/_BATCHERR.md`
 
 ### 3) Add agent script (agent)
 
@@ -41,10 +33,13 @@ Automate documentation updates on dev pushes: analyze code changes, update docs 
 - Enforces watchdog limit via `AGENT_MAX_MINUTES`
 - Summarizes changed code + capped repo context (`AGENT_SUMMARY_BYTES`)
 - Processes up to `AGENT_MAX_FILES_PER_RUN` docs from `_docs/1_FORREVIEW`
-- Skips re-processing via `_docs/_cache` fingerprint
+- Skips re-processing via `_docs/0_cache/*.md` fingerprint files
 - Writes updates in-place (same folder)
 - On any error, writes `_docs/_BATCHERR.md` (with next steps) and exits 0
 - On startup, exits if `_docs/_BATCHERR.md` exists
+
+- Only writes `.md` files under `_docs/`; any other path or extension is rejected and triggers a batch error sentinel.
+- Fingerprints are `.md` files in `_docs/0_cache/` containing an HTML comment header: `<!-- agent-fingerprint: HASH -->`.
 
 ### 4) Configure repo secret (human)
 
@@ -67,7 +62,7 @@ Automate documentation updates on dev pushes: analyze code changes, update docs 
 
 - Put 1–2 docs into `_docs/1_FORREVIEW/`
 - Make a trivial code change in `dev`
-- Confirm a new commit updates those docs in place; check that `_docs/_cache` contains fingerprints
+- Confirm a new commit updates those docs in place; check that `_docs/0_cache` contains `.md` fingerprint files with the expected comment header
 
 ### 8) Error behavior (auto)
 
@@ -85,7 +80,7 @@ Automate documentation updates on dev pushes: analyze code changes, update docs 
 
 - `.github/workflows/doc-agent.yml`
 - `scripts/agent/index.js`
-- Folders: `_docs/1_FORREVIEW/`, `_docs/_cache/`
+- Folders: `_docs/1_FORREVIEW/`, `_docs/0_cache/`
 
 ## Notes
 
@@ -94,10 +89,11 @@ Automate documentation updates on dev pushes: analyze code changes, update docs 
 
 ### To-dos
 
-- [ ] Create _docs/1_FORREVIEW and _docs/_cache directories
+- [ ] Create _docs/1_FORREVIEW and _docs/0_cache directories
 - [ ] Add .github/workflows/doc-agent.yml with triggers, blocking, commit patterns
 - [ ] Add scripts/agent/index.js implementing summary, updates, sentinel, watchdog
 - [ ] Add OPENAI_API_KEY as Actions secret
 - [ ] Enable Actions read/write workflow permissions
 - [ ] Tune AGENT_* env vars for cost/time caps
 - [ ] Place sample docs and trigger run on dev; verify outputs
+- [ ] Enforce md-only writes and `_docs/`-scoped writes in agent

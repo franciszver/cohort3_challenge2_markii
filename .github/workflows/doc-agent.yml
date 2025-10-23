@@ -1,0 +1,66 @@
+name: Doc Agent
+
+on:
+  push:
+    branches: [ dev ]
+    # Only run when code changes (not docs-only). Adjust patterns as needed.
+    paths:
+      - "mobile/**"
+      - "src/**"
+      - "schema.graphql"
+      - "scripts/**"
+      - "**/*.ts"
+      - "**/*.tsx"
+  workflow_dispatch:
+
+concurrency:
+  group: doc-agent-dev
+  cancel-in-progress: true
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      NODE_OPTIONS: "--max-old-space-size=1024"
+      AGENT_MAX_MINUTES: "10"               # hard stop watchdog
+      AGENT_MAX_FILES_PER_RUN: "5"          # cost control
+      AGENT_MODEL: "gpt-4o-mini"            # economical default
+      AGENT_MAX_TOKENS: "2000"              # response cap
+      AGENT_SUMMARY_BYTES: "400000"         # cap code context (~400KB)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Block if previous batch error exists
+        run: |
+          if [ -f "_docs/_BATCHERR.md" ]; then
+            echo "_docs/_BATCHERR.md exists. Previous run failed. Delete this file to allow the agent to run again."
+            exit 0
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: |
+          npm init -y >/dev/null 2>&1 || true
+          npm i openai@^4.57.0 glob@^11.0.0
+
+      - name: Run agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node scripts/agent/index.js
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs(agent): update _docs/1_FORREVIEW (or batch error sentinel)"
+          file_pattern: "_docs/1_FORREVIEW/**/*.md _docs/0_cache/**/*.md _docs/_BATCHERR.md"
+
+

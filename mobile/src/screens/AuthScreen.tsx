@@ -94,6 +94,8 @@ export default function AuthScreen({ navigation }: any) {
 		navigation.navigate('ForgotPasswordRequest');
 	};
 
+  // Test comment, can be removed immeidately
+
   return (
     <View style={{ flex: 1, padding: 16 }}>
       <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Welcome</Text>
