@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "push:schema": "node ../scripts/push-schema.js"
   },
   "dependencies": {
     "@aws-amplify/react-native": "^1.2.0",
