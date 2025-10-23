@@ -19,6 +19,7 @@ export default function ChatScreen({ route }: any) {
   const [error, setError] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState('');
   const messageInputRef = useRef<any>(null);
+  const imageInputRef = useRef<any>(null);
   const subRef = useRef<any>(null);
   const typingSubRef = useRef<any>(null);
   const receiptsSubRef = useRef<any>(null);
@@ -361,7 +362,17 @@ export default function ChatScreen({ route }: any) {
         <Button title="Send" onPress={onSend} />
       </View>
       <View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
-        <TextInput style={{ flex: 1, borderWidth: 1, padding: 8 }} value={imageUrl} onChangeText={setImageUrl} placeholder="Image URL" autoCapitalize="none" />
+        <TextInput
+          ref={imageInputRef}
+          style={{ flex: 1, borderWidth: 1, padding: 8 }}
+          value={imageUrl}
+          onChangeText={setImageUrl}
+          placeholder="Image URL"
+          autoCapitalize="none"
+          returnKeyType="send"
+          blurOnSubmit={false}
+          onSubmitEditing={() => { onSendImage(); imageInputRef.current?.focus?.(); }}
+        />
         <Button title="Send Image" onPress={onSendImage} />
       </View>
     </View>
