@@ -18,6 +18,12 @@ Notes and rationale
 - Message screens/components already render timestamps and read receipts; cleanup does not alter message flow.
 - Kept all VTL/root-schema compatibility paths and subscription fallbacks to preserve reliability.
 
+Project hygiene (follow-up cleanup)
+- Migrate `mobile/app.json` settings (icons, splash, adaptiveIcon, web favicon) into `mobile/app.config.ts` and delete `app.json`.
+- Remove unused Amplify config artifacts: `mobile/src/aws-exports.js`, `mobile/src/amplifyconfiguration.json`, `mobile/amplify/`, `mobile/amplify-api-config.json`.
+- Remove `react-native-dotenv` from `mobile/package.json` (no `@env` usage; `app.config.ts` uses `dotenv/config`).
+- Use only `mobile/.env` for mobile builds; no root `.env` required.
+
 Post-clean validation
 - App boot flow still references `AuthScreen`, `VerifyCodeScreen`, `HomeScreen` (utility), `Conversations`, `GroupCreate`, `Chat`.
 - No imports targeted the removed functions/files.

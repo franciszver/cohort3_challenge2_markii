@@ -4,7 +4,7 @@ Goal: Clean up the UI/UX to match user expectations for a modern messaging app (
 
 ## Master list of user-facing functionality (current)
 - Auth
-  - Sign up / Sign in, email verification, forgot password (screens: `mobile/src/screens/AuthScreen.tsx`, `VerifyCodeScreen.tsx`, `ForgotPassword*Screen.tsx`)
+  - Sign in + sign up flow, email verification, forgot password (screens: `mobile/src/screens/AuthScreen.tsx`, `VerifyCodeScreen.tsx`, `ForgotPassword*Screen.tsx`)
   - Auto sign-in if session exists
 - Conversations
   - Combined direct + group list, latest message preview and time, unread dot (screen: `ConversationListScreen.tsx`)

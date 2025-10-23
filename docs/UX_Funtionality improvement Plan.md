@@ -11,14 +11,14 @@ Priority Legend:
 Implementation notes:
 - Use consistent UI patterns across screens (`mobile/src/screens/*`) and shared components.
 - Prefer small, atomic PRs: 1–3 tasks per PR, each manually verified.
-- Surfaces to update will often include `SignInScreen.tsx`, `SignUpScreen.tsx`, `ConfirmEmailScreen.tsx`, `ForgotPassword*Screen.tsx`, `ConversationListScreen.tsx`, `ChatScreen.tsx`, `ProfileSetupScreen.tsx`, and `HomeScreen.tsx`.
+- Surfaces to update will often include `AuthScreen.tsx`, `VerifyCodeScreen.tsx`, `ForgotPassword*Screen.tsx`, `ConversationListScreen.tsx`, `ChatScreen.tsx`, and `HomeScreen.tsx`.
 
 ---
 
 ### Epic P0.1 — Seamless Auth Flow (auto-redirect, reduced screen hops)
 Goal: Remove friction during sign-in and unify verification/reset flows.
 
-Dependencies: Amplify Auth configuration (`mobile/src/aws.ts`, `mobile/src/amplifyconfiguration.json`), navigation root (`mobile/App.tsx`, `mobile/src/screens/*`).
+Dependencies: Amplify Auth configuration (`mobile/src/aws.ts`), navigation root (`mobile/App.tsx`, `mobile/src/screens/*`).
 
 Tasks
 1) Auto-redirect if already signed in on app start (P0)
