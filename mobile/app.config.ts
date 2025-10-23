@@ -4,6 +4,23 @@ import type { ExpoConfig } from 'expo/config';
 const config: ExpoConfig = {
   name: 'cohort3-chat',
   slug: 'cohort3-chat',
+  orientation: 'portrait',
+  userInterfaceStyle: 'light',
+  icon: './assets/icon.png',
+  splash: {
+    image: './assets/splash-icon.png',
+    resizeMode: 'contain',
+    backgroundColor: '#ffffff',
+  },
+  android: {
+    adaptiveIcon: {
+      foregroundImage: './assets/adaptive-icon.png',
+      backgroundColor: '#ffffff',
+    },
+  },
+  web: {
+    favicon: './assets/favicon.png',
+  },
   extra: {
     AWS_REGION: process.env.AWS_REGION,
     COGNITO_USER_POOL_ID: process.env.COGNITO_USER_POOL_ID,
