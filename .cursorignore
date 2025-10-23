@@ -1,6 +1,9 @@
 ﻿*.env
 .env
 .env.local
+**/.env
+**/.env.*
+!**/.env.example
 **/amplify/**
 node_modules/
 .expo/
