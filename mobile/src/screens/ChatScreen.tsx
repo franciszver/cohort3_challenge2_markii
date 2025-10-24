@@ -1,12 +1,14 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert } from 'react-native';
-import { formatTimestamp } from '../utils/time';
+import { formatTimestamp, formatLastSeen } from '../utils/time';
 import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser } from '../graphql/messages';
 import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
-import { updateLastSeen } from '../graphql/users';
+import NetInfo from '@react-native-community/netinfo';
+import { AppState } from 'react-native';
+import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
 import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, listParticipantsForConversation } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
@@ -16,12 +18,14 @@ import { getFlags } from '../utils/flags';
 import { getUserProfile } from '../graphql/profile';
 import { getUserById } from '../graphql/users';
 import Avatar from '../components/Avatar';
+import { useTheme } from '../utils/theme';
 
 function conversationIdFor(a: string, b: string) {
 	return [a, b].sort().join('#');
 }
 
 export default function ChatScreen({ route, navigation }: any) {
+	const theme = useTheme();
 	const [messages, setMessages] = useState<any[]>([]);
 	const [input, setInput] = useState('');
 	const [error, setError] = useState<string | null>(null);
@@ -33,12 +37,14 @@ export default function ChatScreen({ route, navigation }: any) {
 	const typingSubRef = useRef<any>(null);
 	const receiptsSubRef = useRef<any>(null);
 	const deleteSubRef = useRef<any>(null);
+	const presenceSubRef = useRef<any>(null);
 	const typingTimerRef = useRef<any>(null);
 	const lastTypingSentRef = useRef<number>(0);
 	const [isTyping, setIsTyping] = useState(false);
 	const [nextToken, setNextToken] = useState<string | undefined>(undefined);
 	const [isLoadingMore, setIsLoadingMore] = useState(false);
-	const retryTimerRef = useRef<any>(null);
+    const retryTimerRef = useRef<any>(null);
+    const drainIntervalRef = useRef<any>(null);
 	const didInitialScrollRef = useRef(false);
 	const isNearBottomRef = useRef(true);
 	const isUserDraggingRef = useRef(false);
@@ -50,6 +56,9 @@ const otherUserId = route.params?.otherUserSub as string;
 const [otherProfile, setOtherProfile] = useState<any | null>(null);
 const [myId, setMyId] = useState<string>('');
 const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(undefined);
+const [otherLastSeen, setOtherLastSeen] = useState<string | undefined>(undefined);
+const [isSendingMsg, setIsSendingMsg] = useState(false);
+const [isSendingImg, setIsSendingImg] = useState(false);
 
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
@@ -119,17 +128,12 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 						if (m.senderId !== me.userId) {
 							try { await markRead(m.id, me.userId); } catch {}
 							// foreground local notification when chat not focused
-							if (!isFocused) {
-								try {
-									// @ts-ignore
-									const Notifications: any = await import('expo-notifications');
-									await Notifications.requestPermissionsAsync();
-									await Notifications.scheduleNotificationAsync({
-										content: { title: 'New message', body: m.content || 'New message received' },
-										trigger: null,
-									});
-								} catch {}
-							}
+                            if (!isFocused) {
+                                try {
+                                    const { scheduleNotification } = await import('../utils/notify');
+                                    await scheduleNotification('New message', m.content || 'New message received', { conversationId: cid });
+                                } catch {}
+                            }
 						}
 						// Auto-scroll latest into view when focused
 						try {
@@ -228,7 +232,7 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 					deleteSubRef.current = delSub;
 				} catch {}
 
-				// drain outbox with retry/backoff
+                // drain outbox with retry/backoff (one-time on mount)
 				const drainOnce = async () => {
 					const outboxRaw = await AsyncStorage.getItem(`outbox:${cid}`);
 					const outbox = outboxRaw ? JSON.parse(outboxRaw) : [];
@@ -255,13 +259,52 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 					}
 				};
 				await drainOnce();
+                // Periodic drainer with backoff + network/appstate triggers
+                try {
+                    const { ENABLE_OUTBOX_DRAINER } = getFlags();
+                    if (ENABLE_OUTBOX_DRAINER) {
+                        const tick = async () => {
+                            try {
+                                const state = await NetInfo.fetch();
+                                const online = !(state.isConnected === false || state.isInternetReachable === false);
+                                if (!online) return;
+                                const raw = await AsyncStorage.getItem(`outbox:${cid}`);
+                                const arr = raw ? JSON.parse(raw) : [];
+                                const now = Date.now();
+                                const ready = arr.filter((j: any) => !j.nextTryAt || j.nextTryAt <= now);
+                                if (ready.length) await drainOnce();
+                            } catch {}
+                        };
+                        drainIntervalRef.current = setInterval(tick, 4000);
+                        const unsubNet = NetInfo.addEventListener(() => { tick(); });
+                        const onApp = (s: any) => { if (s === 'active') tick(); };
+                        const subApp = AppState.addEventListener('change', onApp);
+                        // store unsubscribers in refs to clean up
+                        (drainIntervalRef as any).unsubNet = unsubNet;
+                        (drainIntervalRef as any).subApp = subApp;
+                    }
+                } catch {}
 				// Final ensure lastReadAt on entering chat
 				try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
 			} catch (e: any) {
 				setError(e?.message ?? 'Failed to load chat');
 			}
+				// Load draft and presence when chat UX is enabled
+				try {
+					const { ENABLE_CHAT_UX } = getFlags();
+					if (ENABLE_CHAT_UX) {
+						try { const d = await AsyncStorage.getItem(`draft:${cid}`); if (d) setInput(d); } catch {}
+						if (otherId) {
+							try {
+								const start = subscribeUserPresence(otherId);
+								const sub = start({ next: (evt: any) => { try { const v = evt?.data?.onUpdateUser?.lastSeen; if (v) setOtherLastSeen(v); } catch {} }, error: () => {} });
+								presenceSubRef.current = sub;
+							} catch {}
+						}
+					}
+				} catch {}
 		})();
-		return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); };
+        return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); presenceSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); try { if (drainIntervalRef.current) clearInterval(drainIntervalRef.current); } catch {}; try { (drainIntervalRef as any).unsubNet?.(); } catch {}; try { (drainIntervalRef as any).subApp?.remove?.(); } catch {}; };
 	}, []);
 
 	// Final trailing lastRead write on blur
@@ -312,6 +355,7 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 				return next;
 			});
 			setInput('');
+			setIsSendingMsg(true);
 			try {
 				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
 				// Opportunistic presence update on outbound send
@@ -341,9 +385,11 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 			}
 			const snapshot = (prev => [optimistic, ...prev])(messages);
 			AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
+			try { const { ENABLE_CHAT_UX } = getFlags(); if (ENABLE_CHAT_UX) await AsyncStorage.removeItem(`draft:${cid}`); } catch {}
 		} catch (e: any) {
 			setError(e?.message ?? 'Send failed');
 		}
+		finally { setIsSendingMsg(false); }
 	};
 
 			const onSendImage = async () => {
@@ -366,6 +412,7 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 			};
 			setMessages(prev => [optimistic, ...prev]);
 			setImageUrl('');
+			setIsSendingImg(true);
 			try {
 				// For MVP, send the URL as content reference; uploading to S3 can be added later
 				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
@@ -384,6 +431,7 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 		} catch (e: any) {
 			setError(e?.message ?? 'Send image failed');
 		}
+		finally { setIsSendingImg(false); }
 	};
 
 	const onChangeInput = async (text: string) => {
@@ -399,13 +447,28 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 				try { await updateLastSeen(me.userId); } catch {}
 			}
 		} catch {}
+		try {
+			const { ENABLE_CHAT_UX } = getFlags();
+			if (ENABLE_CHAT_UX) {
+				const me = await getCurrentUser();
+				const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
+				await AsyncStorage.setItem(`draft:${cid}`, text);
+			}
+		} catch {}
 	};
 
 	return (
 		<View style={{ flex: 1 }}>
 			<View style={{ flexDirection: 'row', alignItems: 'center' }}>
 				<View style={{ flex: 1 }}>
-					<ChatHeader username={otherUserId} online={undefined} subtitle={undefined} profile={otherProfile ? { userId: otherProfile.userId, firstName: otherProfile.firstName, lastName: otherProfile.lastName, email: otherProfile.email, avatarColor: otherProfile.avatarColor } : undefined} />
+					{(() => { const { ENABLE_CHAT_UX } = getFlags(); return (
+						<ChatHeader
+							username={otherUserId}
+							online={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000) : undefined}
+							subtitle={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined}
+							profile={otherProfile ? { userId: otherProfile.userId, firstName: otherProfile.firstName, lastName: otherProfile.lastName, email: otherProfile.email, avatarColor: otherProfile.avatarColor } : undefined}
+						/>
+					); })()}
 				</View>
 				<TouchableOpacity
 					onPress={async () => {
@@ -532,7 +595,7 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 									setInfoVisible(true);
 								}
 								}}>
-																<Text>
+									<Text>
                                         {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? '' : `${item.senderId === myId ? 'Me' : item.senderId}: `}
 										{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
 										{item.__status ? ' ' : ''}

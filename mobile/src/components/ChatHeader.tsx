@@ -3,6 +3,7 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 import Avatar from './Avatar';
 import ProfileModal from './ProfileModal';
 import { getFlags } from '../utils/flags';
+import { useTheme } from '../utils/theme';
 
 type Props = {
   username: string;
@@ -14,9 +15,10 @@ type Props = {
 
 export default function ChatHeader({ username, avatar, online, subtitle, profile }: Props) {
   const { ENABLE_PROFILES } = getFlags();
+  const theme = useTheme();
   const [showProfile, setShowProfile] = useState(false);
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.surface }] }>
       {ENABLE_PROFILES && profile?.email ? (
         <View style={{ position: 'relative' }}>
           <Avatar userId={profile.userId} firstName={profile.firstName} lastName={profile.lastName} email={profile.email} color={profile.avatarColor || undefined} size={32} onPress={() => setShowProfile(true)} />

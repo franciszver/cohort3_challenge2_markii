@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput } from 'react-native';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput, RefreshControl } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
-import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation, listConversationsByParticipant, ensureParticipant } from '../graphql/conversations';
+import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead } from '../graphql/conversations';
 import { batchGetUsersCached, getUserById } from '../graphql/users';
 import { batchGetProfilesCached } from '../graphql/profile';
 import { getLatestMessageInConversation } from '../graphql/messages';
@@ -13,19 +14,26 @@ import { generateClient } from 'aws-amplify/api';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getFlags } from '../utils/flags';
+import { debounce } from '../utils/debounce';
 import { subscribeToasts, showToast } from '../utils/toast';
 import { getUserProfile, updateUserProfile, invalidateProfileCache } from '../graphql/profile';
+import { useTheme } from '../utils/theme';
 
 export default function ConversationListScreen({ navigation }: any) {
+  const theme = useTheme();
   const [items, setItems] = useState<any[]>([]);
+  const [allItems, setAllItems] = useState<any[]>([]);
+  const [query, setQuery] = useState('');
   const [nextToken, setNextToken] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
   const [showId, setShowId] = useState(false);
   const [myId, setMyId] = useState<string>('');
   const [showSolo, setShowSolo] = useState(false);
   const [soloOtherId, setSoloOtherId] = useState('');
   const [soloBusy, setSoloBusy] = useState(false);
   const [banner, setBanner] = useState<{ conversationId: string; preview: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const notifySubsRef = useRef<any[]>([]);
   const lastNotifyAtRef = useRef<Record<string, number>>({});
   const toastUnsubRef = useRef<null | (() => void)>(null);
@@ -50,7 +58,6 @@ export default function ConversationListScreen({ navigation }: any) {
         headerRight: () => (
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Button title="My ID" onPress={() => setShowId(true)} />
-            <Button title="Solo" onPress={() => setShowSolo(true)} />
             {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
               <Button title="Profile" onPress={async () => {
                 try {
@@ -195,6 +202,7 @@ export default function ConversationListScreen({ navigation }: any) {
                   const bt = b?._latest?.createdAt ? new Date(b._latest.createdAt).getTime() : 0;
                   return bt - at;
                 });
+                try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}
                 return next;
               });
 
@@ -272,11 +280,13 @@ export default function ConversationListScreen({ navigation }: any) {
         const bt = b?._latest?.createdAt ? new Date(b._latest.createdAt).getTime() : 0;
         return bt - at;
       });
+      setAllItems(convs);
       setItems(convs);
+      try { await Notifications.setBadgeCountAsync?.((ENABLE_UNREAD_BADGE ? convs.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) : 0) as any); } catch {}
       setNextToken(undefined);
       lastLoadedAtRef.current = Date.now();
     } catch (e: any) { setError(e?.message ?? 'Load failed'); }
-    finally { isLoadingRef.current = false; }
+    finally { isLoadingRef.current = false; setIsInitialLoading(false); }
   }, [navigation]);
 
   useEffect(() => { load(); }, [load]);
@@ -343,13 +353,92 @@ export default function ConversationListScreen({ navigation }: any) {
     return () => clearInterval(id);
   }, [load]);
 
+  const { ENABLE_CONVERSATION_LIST_UX, ENABLE_UNREAD_BADGE } = getFlags();
+
+  async function recomputeBadge(nextItems?: any[]) {
+    try {
+      if (!ENABLE_UNREAD_BADGE) return;
+      const arr = nextItems || items;
+      const total = (arr || []).reduce((acc, c: any) => acc + (c?._unread ? 1 : 0), 0);
+      await Notifications.setBadgeCountAsync?.(total as any);
+    } catch {}
+  }
+
+  // Debounced search filter
+  const applyFilter = useMemo(() => debounce((q: string) => {
+    const term = (q || '').trim().toLowerCase();
+    if (!term) { setItems(allItems); return; }
+    const filtered = allItems.filter((c: any) => {
+      const name = (c.name || '').toLowerCase();
+      const latest = (c._latest?.content || '').toLowerCase();
+      const users = Object.values(c._users || {}) as any[];
+      const profiles = Object.values(c._profiles || {}) as any[];
+      const userText = users.map(u => `${u.displayName||''} ${u.email||''} ${u.username||''}`.toLowerCase()).join(' ');
+      const profileText = profiles.map((p:any)=> `${p.firstName||''} ${p.lastName||''} ${p.email||''}`.toLowerCase()).join(' ');
+      return name.includes(term) || latest.includes(term) || userText.includes(term) || profileText.includes(term);
+    });
+    setItems(filtered);
+  }, 200, { trailing: true }), [allItems]);
+
+  useEffect(() => { if (ENABLE_CONVERSATION_LIST_UX) applyFilter(query); }, [query, allItems, ENABLE_CONVERSATION_LIST_UX, applyFilter]);
+
   return (
     <View style={{ flex: 1, padding: 12 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text style={{ fontSize: 18, fontWeight: '600' }}>Chats</Text>
-        <Button title="New Group" onPress={() => navigation.navigate('GroupCreate')} />
+        <TouchableOpacity onPress={() => navigation.navigate('GroupCreate')} accessibilityLabel="Start a chat" style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
+          <Text style={{ fontSize: 24, lineHeight: 24, color: '#3b82f6' }}>+</Text>
+        </TouchableOpacity>
       </View>
-      {error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
+      {ENABLE_CONVERSATION_LIST_UX ? (
+        <View style={{ marginBottom: 12 }}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search"
+            style={{ borderWidth: 1, padding: 8, borderRadius: 8 }}
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="while-editing"
+          />
+        </View>
+      ) : null}
+      {error ? (
+        <View style={{ paddingVertical: 12 }}>
+          <Text style={{ color: 'red', marginBottom: 8 }}>{error}</Text>
+          <Button title="Retry" onPress={() => { setError(null); setIsInitialLoading(true); load(true); }} />
+        </View>
+      ) : null}
+      {ENABLE_CONVERSATION_LIST_UX && isInitialLoading ? (
+        <View>
+          {Array.from({ length: 10 }).map((_, i) => (
+            <View key={i} style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <View style={{ height: 12, backgroundColor: '#e5e7eb', borderRadius: 6, width: '40%', marginBottom: 6 }} />
+                <View style={{ height: 10, backgroundColor: '#f3f4f6', borderRadius: 5, width: '70%' }} />
+              </View>
+              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: 'transparent' }} />
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {!isInitialLoading && ENABLE_CONVERSATION_LIST_UX && items.length === 0 ? (
+        <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }}>
+          {query.trim() ? (
+            <>
+              <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 6 }}>No results</Text>
+              <Text style={{ color: '#6b7280', marginBottom: 12 }}>No chats match "{query}". Try a different term.</Text>
+              <Button title="Clear search" onPress={() => setQuery('') } />
+            </>
+          ) : (
+            <>
+              <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 6 }}>Start a chat</Text>
+              <Text style={{ color: '#6b7280', marginBottom: 12 }}>You don’t have any conversations yet.</Text>
+            </>
+          )}
+        </View>
+      ) : null}
       <FlatList
         data={items}
         keyExtractor={(item: any) => item.id}
@@ -358,9 +447,46 @@ export default function ConversationListScreen({ navigation }: any) {
         windowSize={7}
         maxToRenderPerBatch={12}
         updateCellsBatchingPeriod={50}
+        refreshControl={(() => { try { const { ENABLE_MESSAGES_PULL_TO_REFRESH } = getFlags(); return ENABLE_MESSAGES_PULL_TO_REFRESH ? (
+          <RefreshControl refreshing={refreshing} onRefresh={async () => { try { setRefreshing(true); await load(true); } catch {} finally { setRefreshing(false); } }} />
+        ) : undefined; } catch { return undefined; } })()}
         renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => { setItems(prev => prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c)); navigation.navigate('Chat', { conversationId: item.id }); }}>
-            <View style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+          ENABLE_CONVERSATION_LIST_UX ? (
+            <Swipeable
+              renderRightActions={() => (
+                <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        const me = await getCurrentUser();
+                        // Mark read now by setting lastReadAt to now
+                        await setMyLastRead(item.id, me.userId, new Date().toISOString());
+                        setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; });
+                      } catch {}
+                    }}
+                    style={{ backgroundColor: '#10b981', justifyContent: 'center', paddingHorizontal: 16 }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600' }}>Mark read</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        // Mark unread by backdating lastReadAt just before latest message
+                        const latestAt = item?._latest?.createdAt ? new Date(item._latest.createdAt).getTime() : Date.now();
+                        const me = await getCurrentUser();
+                        await setMyLastRead(item.id, me.userId, new Date(latestAt - 1000).toISOString());
+                        setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 1 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; });
+                      } catch {}
+                    }}
+                    style={{ backgroundColor: '#3b82f6', justifyContent: 'center', paddingHorizontal: 16 }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600' }}>Mark unread</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            >
+              <TouchableOpacity onPress={() => { setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; }); navigation.navigate('Chat', { conversationId: item.id }); }}>
+                <View style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
               {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
                 <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e5e7eb' }}>
@@ -388,8 +514,18 @@ export default function ConversationListScreen({ navigation }: any) {
                 <Text style={{ fontWeight: '600' }}>
                   {(() => {
                     const { ENABLE_PROFILES } = getFlags();
-                    if (item.name) return item.name;
-                    if (item.isGroup) return 'Group';
+                      if (item.name) return item.name;
+                      if (item.isGroup) {
+                        const initials = (item._participants || []).slice(0, 3).map((p:any) => {
+                          if (ENABLE_PROFILES) {
+                            const prof = item._profiles?.[p.userId];
+                            if (prof && (prof.firstName || prof.lastName)) return `${prof.firstName||''} ${prof.lastName||''}`.trim();
+                          }
+                          const u = item._users?.[p.userId];
+                          return (u?.displayName || u?.email || u?.username || 'User').split('@')[0];
+                        }).filter(Boolean).join(', ');
+                        return initials || 'Group';
+                      }
                     const first = item._participants?.find((p:any)=>p?.userId && p.userId !== myId) || item._participants?.[0];
                     if (ENABLE_PROFILES) {
                       const p = first ? item._profiles?.[first.userId] : null;
@@ -408,6 +544,58 @@ export default function ConversationListScreen({ navigation }: any) {
               ) : null}
             </View>
           </TouchableOpacity>
+            </Swipeable>
+          ) : (
+            <TouchableOpacity onPress={() => { setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; }); navigation.navigate('Chat', { conversationId: item.id }); }}>
+              <View style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+                {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
+                  <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e5e7eb' }}>
+                      <Text style={{ fontSize: 10, color: '#111827' }}>
+                        {(() => { const p = item._profiles?.[item._participants?.[0]?.userId]; if (p) return `${(p.firstName||'').slice(0,1)}${(p.lastName||'').slice(0,1)}`.toUpperCase() || 'U1'; return (item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2); })()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
+                      <Text style={{ fontSize: 10, color: '#111827' }}>
+                        {(() => { const p = item._profiles?.[item._participants?.[1]?.userId]; if (p) return `${(p.firstName||'').slice(0,1)}${(p.lastName||'').slice(0,1)}`.toUpperCase() || 'U2'; return (item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2); })()}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2)}</Text>
+                    </View>
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
+                      <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2)}</Text>
+                    </View>
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '600' }}>
+                    {(() => {
+                      const { ENABLE_PROFILES } = getFlags();
+                      if (item.name) return item.name;
+                      if (item.isGroup) return 'Group';
+                      const first = item._participants?.find((p:any)=>p?.userId && p.userId !== myId) || item._participants?.[0];
+                      if (ENABLE_PROFILES) {
+                        const p = first ? item._profiles?.[first.userId] : null;
+                        if (p && (p.firstName || p.lastName)) return `${p.firstName||''} ${p.lastName||''}`.trim();
+                      }
+                      const u = first ? item._users?.[first.userId] : null;
+                      return (u?.displayName || u?.email || 'Chat');
+                    })()}
+                  </Text>
+                  <Text style={{ color: '#6b7280' }} numberOfLines={1}>
+                    {(item._latest?.content || 'new')} · {item._latest?.createdAt ? formatTimestamp(item._latest.createdAt) : ''}
+                  </Text>
+                </View>
+                {item._unread ? (
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3b82f6' }} />
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          )
         )}
       />
       {banner ? (
