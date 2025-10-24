@@ -100,14 +100,20 @@ async function getRecentMessages(conversationId, limit = 10, jwt) {
   return res?.data?.messagesByConversationIdAndCreatedAt?.items || [];
 }
 
-async function createAssistantMessage(conversationId, content, jwt) {
+async function createAssistantMessage(conversationId, content, jwt, metadataObj, attachmentsArr) {
   const m = /* GraphQL */ `
     mutation CreateMessage($input: CreateMessageInput!) {
-      createMessage(input: $input) { id conversationId content senderId messageType createdAt updatedAt }
+      createMessage(input: $input) { id conversationId content senderId messageType attachments metadata createdAt updatedAt }
     }
   `;
   const nowIso = new Date().toISOString();
   const input = { conversationId, content, senderId: ASSISTANT_BOT_USER_ID, messageType: 'TEXT', createdAt: nowIso, updatedAt: nowIso };
+  if (metadataObj) {
+    try { input.metadata = JSON.stringify(metadataObj); } catch {}
+  }
+  if (attachmentsArr && Array.isArray(attachmentsArr) && attachmentsArr.length) {
+    input.attachments = attachmentsArr;
+  }
   const res = await signAndRequest({ query: m, variables: { input }, opName: 'createMessage', jwt });
   if (res?.errors?.length) {
     console.warn('[assistant] createAssistantMessage errors:', JSON.stringify(res.errors));
@@ -182,15 +188,49 @@ exports.handler = async (event) => {
     let recent = [];
     try { recent = await getRecentMessages(conversationId, 10, jwt); } catch (e) { console.warn('[assistant] getRecentMessages failed:', e?.message || e); }
     const lastUserMessage = (recent || []).find((m) => m?.senderId === userId)?.content || text || '';
-    const content = `${ASSISTANT_REPLY_PREFIX} I saw ‘${(lastUserMessage || '').slice(0, 200)}’. I’ll be smarter soon.`;
+    // Simple weekend plan template
+    const plan = [
+      'Sat 9:00 – Park stroll and coffee',
+      'Sat 12:00 – Picnic (bring sandwiches + fruit)',
+      'Sat 15:00 – Board games at home',
+      'Sun 10:00 – Farmers market (grab veggies for dinner)',
+      'Sun 13:00 – Quick pasta lunch',
+    ];
+    const content = `${ASSISTANT_REPLY_PREFIX} Here’s a simple weekend plan based on what I saw: \n` +
+      `• Focus: ${(lastUserMessage || 'family time').slice(0, 60)}\n` +
+      plan.map(p => `• ${p}`).join('\n');
+    // Include simple events for optional calendar export
+    const now = new Date();
+    const day = (d) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+    const events = [
+      { title: 'Park stroll and coffee', startISO: new Date(day(1).setHours(9,0,0,0)).toISOString(), endISO: new Date(day(1).setHours(10,0,0,0)).toISOString(), notes: 'Casual walk' },
+      { title: 'Picnic lunch', startISO: new Date(day(1).setHours(12,0,0,0)).toISOString(), endISO: new Date(day(1).setHours(13,0,0,0)).toISOString(), notes: 'Bring sandwiches + fruit' },
+      { title: 'Board games', startISO: new Date(day(1).setHours(15,0,0,0)).toISOString(), endISO: new Date(day(1).setHours(17,0,0,0)).toISOString(), notes: 'At home' },
+      { title: 'Farmers market', startISO: new Date(day(2).setHours(10,0,0,0)).toISOString(), endISO: new Date(day(2).setHours(11,30,0,0)).toISOString(), notes: 'Grab veggies' },
+      { title: 'Quick pasta lunch', startISO: new Date(day(2).setHours(13,0,0,0)).toISOString(), endISO: new Date(day(2).setHours(14,0,0,0)).toISOString(), notes: 'At home' },
+    ];
 
     try {
-      const posted = await createAssistantMessage(conversationId, content, jwt);
+      // Embed events as plain JSON sentinel in attachments for client fallback parsing
+      const enc = (() => { try { return 'events:' + JSON.stringify({ events }); } catch { return undefined; } })();
+      const posted = await createAssistantMessage(conversationId, content, jwt, { events }, enc ? [enc] : undefined);
       console.log('[assistant] reply posted id:', posted?.id || '(none)');
       // If backend ignored fields, patch them immediately
       if (posted && (!posted.messageType || !posted.updatedAt)) {
         await ensureMessageFields(posted.id, jwt).catch(() => {});
       }
+      // Best-effort metadata update for events (if supported by schema)
+      try {
+        if (events && events.length) {
+          const u = /* GraphQL */ `
+            mutation UpdateMessage($input: UpdateMessageInput!) {
+              updateMessage(input: $input) { id }
+            }
+          `;
+          const input = { id: posted.id, metadata: JSON.stringify({ events }) };
+          await signAndRequest({ query: u, variables: { input }, opName: 'updateMessage(metadata)', jwt });
+        }
+      } catch {}
     } catch (e) {
       console.warn('[assistant] createMessage failed:', e?.message || e);
     }

@@ -27,6 +27,7 @@ type Flags = {
   NOTIFY_RATE_LIMIT_PER_MINUTE: number;
   // Assistant MVP flags
   ASSISTANT_ENABLED: boolean;
+  ASSISTANT_CALENDAR_ENABLED: boolean;
 };
 
 let _flags: Flags | null = null;
@@ -59,6 +60,7 @@ export function getFlags(): Flags {
     PRESENCE_HEARTBEAT_MS: toNum(extra.PRESENCE_HEARTBEAT_MS, 30000),
     NOTIFY_RATE_LIMIT_PER_MINUTE: toNum(extra.NOTIFY_RATE_LIMIT_PER_MINUTE, 10),
     ASSISTANT_ENABLED: toBool(extra.ASSISTANT_ENABLED, false),
+    ASSISTANT_CALENDAR_ENABLED: toBool(extra.ASSISTANT_CALENDAR_ENABLED, false),
   };
   return _flags;
 }

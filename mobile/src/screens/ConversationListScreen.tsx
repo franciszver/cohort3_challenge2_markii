@@ -34,6 +34,7 @@ export default function ConversationListScreen({ navigation }: any) {
   const [soloBusy, setSoloBusy] = useState(false);
   const [banner, setBanner] = useState<{ conversationId: string; preview: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const notifySubsRef = useRef<any[]>([]);
   const lastNotifyAtRef = useRef<Record<string, number>>({});
   const toastUnsubRef = useRef<null | (() => void)>(null);
@@ -436,6 +437,11 @@ export default function ConversationListScreen({ navigation }: any) {
               </View>
             </View>
           </TouchableOpacity>
+          <View style={{ position: 'absolute', right: 8, top: -4 }}>
+            <TouchableOpacity onPress={() => setShowHelp(true)} accessibilityLabel="Assistant help" style={{ padding: 6 }}>
+              <Text style={{ fontSize: 18, color: '#6b7280' }}>?</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
       {error ? (
@@ -656,6 +662,21 @@ export default function ConversationListScreen({ navigation }: any) {
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
               <Button title="Copy" onPress={async () => { try { await Clipboard.setStringAsync(myId); } catch {} setShowId(false); }} />
               <Button title="Close" onPress={() => setShowId(false)} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={showHelp} transparent animationType="fade" onRequestClose={() => setShowHelp(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Assistant – Getting Started</Text>
+            <Text style={{ color: '#111827', marginBottom: 8 }}>Try these:</Text>
+            <Text style={{ color: '#6b7280', marginBottom: 4 }}>• “Hello”</Text>
+            <Text style={{ color: '#6b7280', marginBottom: 4 }}>• “Plan Saturday: park in the morning, pizza for lunch”</Text>
+            <Text style={{ color: '#6b7280', marginBottom: 4 }}>• “Ingredient: tomato”, then later “Make a recipe”</Text>
+            <Text style={{ color: '#6b7280', marginBottom: 12 }}>You’ll see a friendly summary and a simple plan.</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <Button title="Close" onPress={() => setShowHelp(false)} />
             </View>
           </View>
         </View>

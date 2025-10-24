@@ -1,7 +1,8 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert } from 'react-native';
+import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
-import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser } from '../graphql/messages';
+import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser, getMessageById } from '../graphql/messages';
 import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
@@ -124,11 +125,54 @@ const assistantTimerRef = useRef<any>(null);
 						if (!m || !m.id) { try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[sub] skip invalid message', m); } catch {} ; return; }
 						// Opportunistic presence update on inbound activity
 						try { const meNow = await getCurrentUser(); await updateLastSeen(meNow.userId); } catch {}
-                        setMessages(prev => {
+						setMessages(prev => {
 							const next = mergeDedupSort(prev, [m]);
 							AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
 							return next;
 						});
+                        // Calendar CTA (flag-gated) — if metadata missing in sub payload, refetch message once to get metadata
+						try {
+							const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
+							if (ASSISTANT_CALENDAR_ENABLED && m?.senderId === 'assistant-bot') {
+								// Best-effort parse of metadata
+                                let meta = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
+                                if (!meta?.events) {
+                                    // Retry a few times to let backend update metadata
+                                    for (let i = 0; i < 5 && !(meta?.events && meta.events.length); i++) {
+                                        try {
+                                            const full = await getMessageById(m.id);
+                                            meta = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
+                                            try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[meta] attempt', i+1, 'events=', Array.isArray(meta?.events) ? meta.events.length : 0); } catch {}
+                                        } catch {}
+                                        if (!(meta?.events && meta.events.length)) {
+                                            const delay = 250 + i*300; // ~250,550,850,1150,1450ms
+                                            await new Promise(r => setTimeout(r, delay));
+                                        }
+                                    }
+                                }
+                                // Final fallback: check attachments for embedded events payload (events:<json> or events:<base64>)
+                                if (!(meta?.events && meta.events.length) && Array.isArray((m as any).attachments)) {
+                                    try {
+                                        const hit = (m as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('events:'));
+                                        if (hit) {
+                                            const payload = hit.slice('events:'.length);
+                                            let obj: any = null;
+                                            try { obj = JSON.parse(payload); } catch {
+                                                try { obj = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch {}
+                                            }
+                                            if (obj && Array.isArray(obj.events) && obj.events.length) {
+                                                meta = { ...(meta || {}), events: obj.events };
+                                                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[meta] attachment events found =', obj.events.length); } catch {}
+                                            }
+                                        }
+                                    } catch {}
+                                }
+								if (meta?.events && Array.isArray(meta.events) && meta.events.length) {
+									// Store marker in AsyncStorage so we can render a CTA row below this message (simple approach without schema change)
+									try { await AsyncStorage.setItem(`cal:${m.id}`, JSON.stringify({ events: meta.events })); } catch {}
+								}
+							}
+						} catch {}
                         try { if (m?.senderId === 'assistant-bot') setAssistantPending(false); } catch {}
 						try { await markDelivered(m.id, me.userId); } catch {}
 						if (m.senderId !== me.userId) {
@@ -653,6 +697,52 @@ const assistantTimerRef = useRef<any>(null);
 									<Text style={{ color: '#6b7280', fontSize: 12 }}>
 										{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
 									</Text>
+									{(() => { try {
+										const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
+										if (!ASSISTANT_CALENDAR_ENABLED) return null;
+										if (item.senderId !== 'assistant-bot') return null;
+                            const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+                            let evs = Array.isArray(meta?.events) ? meta.events : [];
+                            if (!evs.length && Array.isArray((item as any).attachments)) {
+                                try {
+                                    const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('events:'));
+                                    if (hit) {
+                                        const payload = hit.slice('events:'.length);
+                                        try { const obj = JSON.parse(payload); if (Array.isArray(obj?.events) && obj.events.length) evs = obj.events; } catch {}
+                                    }
+                                } catch {}
+                            }
+										if (!evs.length) return null;
+										return (
+											<View style={{ marginTop: 6 }}>
+												<TouchableOpacity
+													onPress={async () => {
+														try {
+															const perm = await Calendar.requestCalendarPermissionsAsync();
+															if (perm.status !== 'granted') { try { showToast('Calendar permission denied'); } catch {} return; }
+															const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+															const target = cals.find((c:any) => (c?.allowsModifications)) || cals[0];
+															if (!target?.id) { try { showToast('No writable calendar found'); } catch {} return; }
+															for (const e of evs.slice(0, 10)) {
+																try {
+																	await Calendar.createEventAsync(target.id, {
+																		title: e.title || 'Assistant Event',
+																		startDate: new Date(e.startISO || Date.now()),
+																		endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
+																		notes: e.notes || undefined,
+																	});
+																} catch {}
+															}
+															try { showToast('Added to calendar'); } catch {}
+														} catch {}
+													}}
+													style={{ marginTop: 4 }}
+												>
+													<Text style={{ color: '#3b82f6', fontWeight: '600' }}>Add to calendar</Text>
+												</TouchableOpacity>
+											</View>
+										);
+									} catch { return null; } })()}
 								</TouchableOpacity>
 							)}
 						</View>
