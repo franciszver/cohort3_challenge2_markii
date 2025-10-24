@@ -29,6 +29,7 @@ const config: ExpoConfig = {
     APPSYNC_ENDPOINT: process.env.APPSYNC_ENDPOINT,
     DEBUG_LOGS: process.env.DEBUG_LOGS ?? 'false',
     ENABLE_INTROSPECTION: process.env.ENABLE_INTROSPECTION ?? 'false',
+    ENABLE_PROFILES: process.env.ENABLE_PROFILES ?? 'true',
     PRESENCE_HEARTBEAT_MS: process.env.PRESENCE_HEARTBEAT_MS ?? '30000',
     NOTIFY_RATE_LIMIT_PER_MINUTE: process.env.NOTIFY_RATE_LIMIT_PER_MINUTE ?? '10',
   },

@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 type Flags = {
   DEBUG_LOGS: boolean;
   ENABLE_INTROSPECTION: boolean;
+  ENABLE_PROFILES: boolean;
   PRESENCE_HEARTBEAT_MS: number;
   NOTIFY_RATE_LIMIT_PER_MINUTE: number;
 };
@@ -15,6 +16,7 @@ export function getFlags(): Flags {
   _flags = {
     DEBUG_LOGS: toBool(extra.DEBUG_LOGS, false),
     ENABLE_INTROSPECTION: toBool(extra.ENABLE_INTROSPECTION, false),
+    ENABLE_PROFILES: toBool(extra.ENABLE_PROFILES, false),
     PRESENCE_HEARTBEAT_MS: toNum(extra.PRESENCE_HEARTBEAT_MS, 30000),
     NOTIFY_RATE_LIMIT_PER_MINUTE: toNum(extra.NOTIFY_RATE_LIMIT_PER_MINUTE, 10),
   };

@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput } from 'react-native';
-import { getCurrentUser, signOut } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
-import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation } from '../graphql/conversations';
-import { batchGetUsersCached } from '../graphql/users';
+import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation, listConversationsByParticipant, ensureParticipant } from '../graphql/conversations';
+import { batchGetUsersCached, getUserById } from '../graphql/users';
+import { batchGetProfilesCached } from '../graphql/profile';
 import { getLatestMessageInConversation } from '../graphql/messages';
 import { formatTimestamp } from '../utils/time';
 import { useFocusEffect } from '@react-navigation/native';
@@ -12,7 +13,8 @@ import { generateClient } from 'aws-amplify/api';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getFlags } from '../utils/flags';
-import { subscribeToasts } from '../utils/toast';
+import { subscribeToasts, showToast } from '../utils/toast';
+import { getUserProfile, updateUserProfile, invalidateProfileCache } from '../graphql/profile';
 
 export default function ConversationListScreen({ navigation }: any) {
   const [items, setItems] = useState<any[]>([]);
@@ -27,14 +29,18 @@ export default function ConversationListScreen({ navigation }: any) {
   const notifySubsRef = useRef<any[]>([]);
   const lastNotifyAtRef = useRef<Record<string, number>>({});
   const toastUnsubRef = useRef<null | (() => void)>(null);
+  const [showMe, setShowMe] = useState(false);
+  const [meProfile, setMeProfile] = useState<{ firstName?: string; lastName?: string; email?: string } | null>(null);
+  const [meSaving, setMeSaving] = useState(false);
+  // debug logs removed
 
   const isLoadingRef = useRef(false);
   const lastLoadedAtRef = useRef(0);
-  const load = useCallback(async () => {
+  const load = useCallback(async (force?: boolean) => {
     try {
       if (isLoadingRef.current) return;
       const now = Date.now();
-      if (now - lastLoadedAtRef.current < 1500) return; // staleness guard
+      if (!force && now - lastLoadedAtRef.current < 1500) return; // staleness guard
       isLoadingRef.current = true;
       setError(null);
       const me = await getCurrentUser();
@@ -45,6 +51,66 @@ export default function ConversationListScreen({ navigation }: any) {
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Button title="My ID" onPress={() => setShowId(true)} />
             <Button title="Solo" onPress={() => setShowSolo(true)} />
+            {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
+              <Button title="Profile" onPress={async () => {
+                try {
+                  const meNow = await getCurrentUser();
+                  // Build initial fields from fast local sources first
+                  let first = '';
+                  let last = '';
+                  let email = '';
+                  try {
+                    const session: any = await fetchAuthSession();
+                    const claims: any = session?.tokens?.idToken?.payload || {};
+                    first = claims.given_name || '';
+                    last = claims.family_name || '';
+                    email = claims.email || '';
+                  } catch (e) {}
+                  try {
+                    if (!email) {
+                      const meNow2: any = await getCurrentUser();
+                      email = meNow2?.username || meNow2?.signInDetails?.loginId || '';
+                    }
+                  } catch (e) {}
+                  // Local cache quick fill
+                  try {
+                    const localRaw = await AsyncStorage.getItem('profile:self');
+                    const local = localRaw ? JSON.parse(localRaw) : null;
+                    first = first || (local?.firstName || '');
+                    last = last || (local?.lastName || '');
+                    email = email || (local?.email || '');
+                  } catch (e) {}
+                  // Show modal immediately with best-known values
+                  setMeProfile({ firstName: first, lastName: last, email });
+                  setShowMe(true);
+                  // Fetch UserProfile in background with timeout to refine values
+                  const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(undefined as unknown as T), ms))]);
+                  try {
+                    const r: any = await withTimeout(getUserProfile(meNow.userId), 2000);
+                    const p = r?.data?.getUserProfile;
+                    if (p) {
+                      const nf = p.firstName || first;
+                      const nl = p.lastName || last;
+                      const ne = p.email || email;
+                      setMeProfile({ firstName: nf, lastName: nl, email: ne });
+                    }
+                  } catch (e) {}
+                  // As last resort, Users table for email
+                  if (!email) {
+                    try {
+                      const ur: any = await getUserById(meNow.userId);
+                      const u = ur?.data?.getUser;
+                      if (u?.email) {
+                        setMeProfile(prev => ({ ...(prev || {}), email: u.email }));
+                      }
+                    } catch (e) {}
+                  }
+                } catch (e) {
+                  setMeProfile({ firstName: '', lastName: '', email: '' });
+                  setShowMe(true);
+                }
+              }} />
+            ) : null}
             <Button title="Sign Out" onPress={async () => { try { await signOut(); } catch {} navigation.replace('Auth'); }} />
           </View>
         ),
@@ -186,15 +252,18 @@ export default function ConversationListScreen({ navigation }: any) {
           const partsRes: any = await listParticipantsForConversation(c.id, 3);
           const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
           const userMap = await batchGetUsersCached(parts.map((p: any) => p.userId));
-          // compute unread from myLastRead map
+          let profileMap: Record<string, any> | null = null;
+          try {
+            const { ENABLE_PROFILES } = getFlags();
+            if (ENABLE_PROFILES) profileMap = await batchGetProfilesCached(parts.map((p: any) => p.userId));
+          } catch {}
+          // compute unread from myLastRead map; if latestFinal newer than lastRead, unread
           let unread = 0;
           const lastRead = myLastRead[c.id];
-          if (latest?.createdAt && lastRead) {
-            unread = new Date(latest.createdAt).getTime() > new Date(lastRead).getTime() ? 1 : 0;
-          } else if (latest?.createdAt && !lastRead) {
-            unread = 1;
-          }
-          convs.push({ ...c, _latest: latestFinal, _participants: parts, _users: userMap, _unread: unread });
+          const latestTs = latestFinal?.createdAt ? new Date(latestFinal.createdAt).getTime() : 0;
+          const lastReadTs = lastRead ? new Date(lastRead).getTime() : 0;
+          unread = latestTs > lastReadTs ? 1 : 0;
+          convs.push({ ...c, _latest: latestFinal, _participants: parts, _users: userMap, _profiles: profileMap || {}, _unread: unread });
         }
       }
       // Sort by latest activity (latest message createdAt desc)
@@ -212,7 +281,7 @@ export default function ConversationListScreen({ navigation }: any) {
 
   useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => {
-    load();
+    load(true);
     // subscribe to toast bus
     try { toastUnsubRef.current?.(); } catch {}
     toastUnsubRef.current = subscribeToasts((msg) => {
@@ -241,7 +310,6 @@ export default function ConversationListScreen({ navigation }: any) {
         const sub = op.subscribe({
           next: async (evt: any) => {
             const p = evt?.data?.onCreateConversationParticipant;
-            try { console.log('[conversations] onCreateConversationParticipant', p); } catch {}
             if (!p?.conversationId) return;
             try {
               const r: any = await getConversation(p.conversationId);
@@ -291,23 +359,48 @@ export default function ConversationListScreen({ navigation }: any) {
         maxToRenderPerBatch={12}
         updateCellsBatchingPeriod={50}
         renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => navigation.navigate('Chat', { conversationId: item.id })}>
+          <TouchableOpacity onPress={() => { setItems(prev => prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c)); navigation.navigate('Chat', { conversationId: item.id }); }}>
             <View style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
-                {/* Simple composite: initials from first 2 participants */}
-                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2)}</Text>
+              {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
+                <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e5e7eb' }}>
+                    <Text style={{ fontSize: 10, color: '#111827' }}>
+                      {(() => { const p = item._profiles?.[item._participants?.[0]?.userId]; if (p) return `${(p.firstName||'').slice(0,1)}${(p.lastName||'').slice(0,1)}`.toUpperCase() || 'U1'; return (item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2); })()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
+                    <Text style={{ fontSize: 10, color: '#111827' }}>
+                      {(() => { const p = item._profiles?.[item._participants?.[1]?.userId]; if (p) return `${(p.firstName||'').slice(0,1)}${(p.lastName||'').slice(0,1)}`.toUpperCase() || 'U2'; return (item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2); })()}
+                    </Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
-                  <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2)}</Text>
+              ) : (
+                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2)}</Text>
+                  </View>
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
+                    <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2)}</Text>
+                  </View>
                 </View>
-              </View>
+              )}
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: '600' }}>
-                  {item.name || (item.isGroup ? 'Group' : (item._users?.[item._participants?.find((p:any)=>true)?.userId]?.displayName || item._users?.[item._participants?.find((p:any)=>true)?.userId]?.email || 'Chat'))}
+                  {(() => {
+                    const { ENABLE_PROFILES } = getFlags();
+                    if (item.name) return item.name;
+                    if (item.isGroup) return 'Group';
+                    const first = item._participants?.find((p:any)=>p?.userId && p.userId !== myId) || item._participants?.[0];
+                    if (ENABLE_PROFILES) {
+                      const p = first ? item._profiles?.[first.userId] : null;
+                      if (p && (p.firstName || p.lastName)) return `${p.firstName||''} ${p.lastName||''}`.trim();
+                    }
+                    const u = first ? item._users?.[first.userId] : null;
+                    return (u?.displayName || u?.email || 'Chat');
+                  })()}
                 </Text>
                 <Text style={{ color: '#6b7280' }} numberOfLines={1}>
-                  {(item._latest?.content || 'yes?')} · {item._latest?.createdAt ? formatTimestamp(item._latest.createdAt) : ''}
+                  {(item._latest?.content || 'new')} · {item._latest?.createdAt ? formatTimestamp(item._latest.createdAt) : ''}
                 </Text>
               </View>
               {item._unread ? (
@@ -373,7 +466,7 @@ export default function ConversationListScreen({ navigation }: any) {
                     const freshId = `${[a, b].sort().join('#')}-${Date.now()}`;
                     await ensureDirectConversation(freshId, a, b);
                     // One-time refresh to ensure the new conversation appears immediately
-                    try { await load(); } catch {}
+                    try { await load(true); } catch {}
                     setShowSolo(false);
                     setSoloBusy(false);
                     navigation.navigate('Chat', { conversationId: freshId, otherUserSub: b });
@@ -382,6 +475,56 @@ export default function ConversationListScreen({ navigation }: any) {
                   }
                 }}
                 disabled={soloBusy || !soloOtherId.trim()}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={showMe} transparent animationType="fade" onRequestClose={() => { setShowMe(false); }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Your Profile</Text>
+            <Text style={{ color: '#6b7280', marginBottom: 8 }}>Edit your first and last name:</Text>
+            <View style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: '#f9fafb' }}>
+              <Text style={{ color: '#6b7280', marginBottom: 4 }}>Email (read-only)</Text>
+              <Text selectable>{meProfile?.email || '(not available)'}</Text>
+            </View>
+            <View style={{ borderWidth: 1, padding: 8, marginBottom: 8 }}>
+              <TextInput placeholder="First Name" value={meProfile?.firstName || ''} onChangeText={(v)=>{ setMeProfile(p=>({ ...(p||{}), firstName: v })); }} />
+            </View>
+            <View style={{ borderWidth: 1, padding: 8, marginBottom: 12 }}>
+              <TextInput placeholder="Last Name" value={meProfile?.lastName || ''} onChangeText={(v)=>{ setMeProfile(p=>({ ...(p||{}), lastName: v })); }} />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <Button title="Cancel" onPress={() => { setShowMe(false); }} />
+              <Button
+                title={meSaving ? 'Saving…' : 'Save'}
+                onPress={async () => {
+                  if (!meProfile) return;
+                  setMeSaving(true);
+                  let ok = false;
+                  try {
+                    const r: any = await updateUserProfile({ firstName: (meProfile.firstName||'').trim() || undefined, lastName: (meProfile.lastName||'').trim() || undefined });
+                    const hasErrors = !!(r?.errors && r.errors.length);
+                    if (hasErrors || !r?.data?.updateUserProfile) {
+                      try { showToast('Save failed'); } catch {}
+                      ok = false;
+                    } else {
+                      ok = true;
+                    }
+                    try { await AsyncStorage.setItem('profile:self', JSON.stringify({ firstName: (meProfile.firstName||'').trim(), lastName: (meProfile.lastName||'').trim(), email: meProfile.email || '' })); } catch {}
+                  } catch (e) {}
+                  finally {
+                    setMeSaving(false);
+                    if (ok) {
+                      setShowMe(false);
+                    } else {
+                    }
+                    try { const meNow = await getCurrentUser(); invalidateProfileCache(meNow.userId); } catch {}
+                    try { showToast(ok ? 'Profile updated' : 'Saved (with warnings)'); } catch {}
+                  }
+                }}
+                disabled={meSaving}
               />
             </View>
           </View>

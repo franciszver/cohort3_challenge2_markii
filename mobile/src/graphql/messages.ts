@@ -32,10 +32,7 @@ async function logQueryFieldsOnce() {
   try {
     const res: any = await getClient().graphql({ query: introspect, authMode: 'userPool' });
     const names = (res?.data?.__schema?.queryType?.fields || []).map((f: any) => f?.name).filter(Boolean);
-    if (getFlags().DEBUG_LOGS) console.log('[messages] schema Query fields', names);
-  } catch (ie) {
-    if (getFlags().DEBUG_LOGS) console.log('[messages] schema introspection failed', { message: (ie as any)?.message, raw: safe(ie) });
-  }
+  } catch (ie) {}
 }
 
 // Root schema alignment: use messagesByConversationIdAndCreatedAt, createMessage, and onCreateMessage with filter
@@ -344,66 +341,38 @@ export async function listMessagesCompat(
   nextToken?: string
 ) {
   try {
-    if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root start', { conversationId, limit, nextToken });
     const res: any = await listMessagesByConversation(conversationId, limit, nextToken);
     if (res?.errors?.length) {
-      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root GraphQL errors', safe(res.errors));
       throw new Error(res.errors?.[0]?.message || 'root returned errors');
     }
     const page = res?.data?.messagesByConversationIdAndCreatedAt;
     if (!page || !page.items) throw new Error('root listMessages unavailable');
-    if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root ok', { count: page.items.length, nextToken: page.nextToken });
     return { items: page.items, nextToken: page.nextToken };
   } catch (e) {
-    if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat root failed, trying VTL', {
-      name: (e as any)?.name,
-      code: (e as any)?.code,
-      message: (e as any)?.message,
-      errors: (e as any)?.errors,
-      cause: (e as any)?.cause,
-      raw: safe(e),
-    });
+    
     // Log what fields the backend actually exposes to guide fallback
     logQueryFieldsOnce().catch(() => {});
     // Try generic list with filter shape next
     try {
       const res: any = await listMessagesByFilter(conversationId, limit, nextToken);
       if (res?.errors?.length) {
-        if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat generic filter GraphQL errors', safe(res.errors));
       }
       const page = res?.data?.listMessages;
       const items = page?.items || [];
-      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat generic filter ok', { count: items.length, nextToken: page?.nextToken });
       return { items, nextToken: page?.nextToken };
     } catch (ge) {
-      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat generic filter failed, trying VTL', {
-        name: (ge as any)?.name,
-        code: (ge as any)?.code,
-        message: (ge as any)?.message,
-        errors: (ge as any)?.errors,
-        cause: (ge as any)?.cause,
-        raw: safe(ge),
-      });
+      
     }
     // Finally try legacy VTL API shape if present
     try {
       const res: any = await listMessagesVtl(conversationId, limit, nextToken);
       if (res?.errors?.length) {
-        if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat VTL GraphQL errors', safe(res.errors));
       }
       const page = res?.data?.listMessages;
       const items = (page?.items || []).map(mapVtlMessageToRootShape);
-      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat VTL ok', { count: items.length, nextToken: page?.nextToken });
       return { items, nextToken: page?.nextToken };
     } catch (ve) {
-      if (getFlags().DEBUG_LOGS) console.log('[messages] listMessagesCompat VTL failed', {
-        name: (ve as any)?.name,
-        code: (ve as any)?.code,
-        message: (ve as any)?.message,
-        errors: (ve as any)?.errors,
-        cause: (ve as any)?.cause,
-        raw: safe(ve),
-      });
+      
       throw ve;
     }
   }
@@ -415,20 +384,12 @@ export async function sendTextMessageCompat(
   senderId: string
 ) {
   try {
-    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root start', { conversationId, contentLen: content?.length ?? 0 });
     const res: any = await createTextMessage(conversationId, content, senderId);
     const msg = res?.data?.createMessage;
     if (!msg) throw new Error('root send unavailable');
-    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root ok', { id: msg?.id });
     return msg;
   } catch (e) {
-    try {
-      console.log('[messages] sendTextMessageCompat root failed', {
-        message: (e as any)?.message,
-        errors: (e as any)?.errors,
-        raw: safe(e),
-      });
-    } catch {}
+    try {} catch {}
     // Do not attempt legacy VTL fallback; surface the root error to caller
     throw e;
   }
@@ -452,13 +413,12 @@ export function subscribeMessagesCompat(conversationId: string) {
             observer.next?.({ data: { onMessageInConversation: m } });
           },
           error: (err: any) => {
-            console.log('[messages] subscribe onCreate error', { message: err?.message });
             // if onCreate fails too, try legacy VTL
             startFallback();
           },
         });
       } catch (e) {
-        console.log('[messages] subscribe onCreate threw; trying VTL');
+        
         startFallback();
       }
     };
@@ -469,11 +429,9 @@ export function subscribeMessagesCompat(conversationId: string) {
       fallbackActive = fallback({
         next: (evt: any) => {
           const mapped = mapVtlMessageToRootShape(evt.data.onMessage);
-          console.log('[messages] subscribe VTL event', { id: mapped?.id });
           observer.next?.({ data: { onMessageInConversation: mapped } });
         },
         error: (err: any) => {
-          console.log('[messages] subscribe VTL error', { message: err?.message });
           observer.error?.(err);
         },
       });
@@ -483,17 +441,15 @@ export function subscribeMessagesCompat(conversationId: string) {
       const primary = subscribeMessagesInConversation(conversationId);
       active = primary({
         next: (evt: any) => {
-          try { if (getFlags().DEBUG_LOGS) console.log('[messages] subscribe root event', { id: evt?.data?.onMessageInConversation?.id }); } catch {}
+          try {} catch {}
           observer.next?.(evt);
         },
         error: (_err: any) => {
           try { active?.unsubscribe?.(); } catch {}
-          if (getFlags().DEBUG_LOGS) console.log('[messages] subscribe root error; switching to onCreate');
           startOnCreate();
         },
       });
     } catch {
-      if (getFlags().DEBUG_LOGS) console.log('[messages] subscribe root threw; starting onCreate');
       startOnCreate();
     }
 

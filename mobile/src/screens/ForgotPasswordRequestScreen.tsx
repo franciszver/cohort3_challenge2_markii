@@ -9,7 +9,6 @@ export default function ForgotPasswordRequestScreen({ navigation }: any) {
 
   const append = (msg: string, payload?: any) => {
     const line = payload ? `${msg} ${JSON.stringify(payload)}` : msg;
-    console.log(`[ForgotPasswordRequest] ${line}`);
     setLog(prev => `${prev}${prev ? '\n' : ''}${line}`);
   };
 

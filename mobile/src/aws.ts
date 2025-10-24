@@ -4,9 +4,7 @@ import Constants from 'expo-constants';
 const extra = (Constants.expoConfig?.extra || Constants.manifest?.extra || {}) as any;
 
 export function configureAmplify() {
-  try {
-    console.log('[Amplify] extra:', JSON.stringify(extra, null, 2));
-  } catch {}
+  // debug logs removed
   const config = {
     Auth: {
       Cognito: {
@@ -26,8 +24,6 @@ export function configureAmplify() {
     },
   } as const;
 
-  console.log('[Amplify] configuring with:', JSON.stringify(config, null, 2));
   Amplify.configure(config);
-  console.log('[Amplify] configure() called');
 }
 

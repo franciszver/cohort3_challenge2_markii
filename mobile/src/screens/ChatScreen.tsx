@@ -7,11 +7,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
 import { updateLastSeen } from '../graphql/users';
-import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage } from '../graphql/conversations';
+import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, listParticipantsForConversation } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
 import { generateLocalId } from '../utils/ids';
+import { getFlags } from '../utils/flags';
+import { getUserProfile } from '../graphql/profile';
+import { getUserById } from '../graphql/users';
+import Avatar from '../components/Avatar';
 
 function conversationIdFor(a: string, b: string) {
 	return [a, b].sort().join('#');
@@ -22,6 +26,7 @@ export default function ChatScreen({ route, navigation }: any) {
 	const [input, setInput] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [imageUrl, setImageUrl] = useState('');
+	const listRef = useRef<any>(null);
 	const messageInputRef = useRef<any>(null);
 	const imageInputRef = useRef<any>(null);
 	const subRef = useRef<any>(null);
@@ -34,11 +39,17 @@ export default function ChatScreen({ route, navigation }: any) {
 	const [nextToken, setNextToken] = useState<string | undefined>(undefined);
 	const [isLoadingMore, setIsLoadingMore] = useState(false);
 	const retryTimerRef = useRef<any>(null);
+	const didInitialScrollRef = useRef(false);
+	const isNearBottomRef = useRef(true);
+	const isUserDraggingRef = useRef(false);
 	const isFocused = useIsFocused();
-	const otherUserId = route.params?.otherUserSub as string;
+const otherUserId = route.params?.otherUserSub as string;
 	const providedConversationId = route.params?.conversationId as string | undefined;
 	const [infoVisible, setInfoVisible] = useState(false);
 	const [infoText, setInfoText] = useState<string>('');
+const [otherProfile, setOtherProfile] = useState<any | null>(null);
+const [myId, setMyId] = useState<string>('');
+const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(undefined);
 
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
@@ -50,13 +61,48 @@ export default function ChatScreen({ route, navigation }: any) {
 	useEffect(() => {
 		(async () => {
 			try {
-				const me = await getCurrentUser();
-				let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+                const me = await getCurrentUser();
+                setMyId(me.userId);
+                let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
 				if (!cid) throw new Error('No conversation target');
+                // Resolve other participant if not provided
+                let otherId = otherUserId as string | undefined;
+                if (!otherId) {
+                    try {
+                        const partsRes: any = await listParticipantsForConversation(cid, 3);
+                        const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+                        const other = parts.find((p: any) => p?.userId && p.userId !== me.userId);
+                        if (other?.userId) otherId = other.userId;
+                    } catch {}
+                }
+                setOtherUserResolved(otherId);
+                // Resolve other participant profile (flagged)
+                try {
+                    const { ENABLE_PROFILES } = getFlags();
+                    if (ENABLE_PROFILES && otherId) {
+                        const r: any = await getUserProfile(otherId);
+                        const p = r?.data?.getUserProfile;
+                        // Fallback to Users table for email if profile missing
+                        if (!p || (!p.firstName && !p.lastName && !p.email)) {
+                            try {
+                                const ur: any = await getUserById(otherId);
+                                const u = ur?.data?.getUser;
+                                if (p) setOtherProfile({ ...p, email: p.email || u?.email });
+                                else if (u) setOtherProfile({ userId: otherId, email: u.email });
+                            } catch {
+                                if (p) setOtherProfile(p);
+                            }
+                        } else {
+                            setOtherProfile(p);
+                        }
+                    }
+                } catch {}
 				// Ensure direct conversation exists when entering from 1:1 flow
-				if (!providedConversationId && otherUserId) {
-					try { await ensureDirectConversation(cid, me.userId, otherUserId); } catch {}
+                if (!providedConversationId && otherId) {
+                    try { await ensureDirectConversation(cid, me.userId, otherId); } catch {}
 				}
+				// Set lastReadAt immediately on entering chat
+				try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
 				// subscribe to new messages in this conversation (first, to avoid missing messages)
 				const subscribe = subscribeMessagesCompat(cid);
 				const sub = subscribe({
@@ -85,14 +131,27 @@ export default function ChatScreen({ route, navigation }: any) {
 								} catch {}
 							}
 						}
+						// Auto-scroll latest into view when focused
+						try {
+							if (isFocused) {
+								setTimeout(() => { try { listRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {} }, 0);
+							}
+						} catch {}
 					},
-					error: (e: any) => console.log('sub error', e),
+						error: (_e: any) => {},
 				});
 				subRef.current = sub;
 				// hydrate from cache next
 				const cached = await AsyncStorage.getItem(`history:${cid}`);
 				if (cached) {
-					try { setMessages(JSON.parse(cached)); } catch {}
+					try {
+						setMessages(JSON.parse(cached));
+						// ensure we show the latest message once on first load
+						if (!didInitialScrollRef.current) {
+							didInitialScrollRef.current = true;
+							setTimeout(() => { try { listRef.current?.scrollToOffset?.({ offset: 0, animated: false }); } catch {} }, 0);
+						}
+					} catch {}
 				}
 				// fetch latest page after subscription is active
 				const res: any = await listMessagesCompat(cid, 25);
@@ -102,7 +161,7 @@ export default function ChatScreen({ route, navigation }: any) {
 				const decorated = await Promise.all(items.map(async (m: any) => {
 					try {
 						if (m.senderId === me.userId) {
-							const r: any = await getReceiptForMessageUser(m.id, otherUserId);
+                            const r: any = await getReceiptForMessageUser(m.id, otherUserResolved || otherUserId);
 							const receipt = r?.data?.messageReadsByMessageIdAndUserId?.items?.[0];
 							const state = receipt?.readAt ? 'read' : (receipt?.deliveredAt ? 'delivered' : 'sent');
 							return { ...m, __status: state };
@@ -115,6 +174,13 @@ export default function ChatScreen({ route, navigation }: any) {
 					AsyncStorage.setItem(`history:${cid}`, JSON.stringify(merged)).catch(() => {});
 					return merged;
 				});
+				// ensure scrolled to latest if cache was empty
+				try {
+					if (!didInitialScrollRef.current) {
+						didInitialScrollRef.current = true;
+						setTimeout(() => { try { listRef.current?.scrollToOffset?.({ offset: 0, animated: false }); } catch {} }, 0);
+					}
+				} catch {}
 				// mark delivered for fetched messages not sent by me
 				try {
 					for (const m of items) {
@@ -149,7 +215,16 @@ export default function ChatScreen({ route, navigation }: any) {
 				// subscribe to conversation deleted events to navigate away if deleted elsewhere
 				try {
 					const delStart = subscribeConversationDeleted(cid);
-					const delSub = delStart({ next: () => { try { navigation.goBack?.(); } catch {} try { showToast('Conversation was deleted'); } catch {} }, error: () => {} });
+					const delSub = delStart({ next: () => {
+						try {
+							if (navigation.canGoBack?.()) {
+								navigation.goBack?.();
+							} else {
+								navigation.navigate?.('Conversations');
+							}
+						} catch {}
+						try { showToast('Conversation was deleted'); } catch {}
+					}, error: () => {} });
 					deleteSubRef.current = delSub;
 				} catch {}
 
@@ -180,7 +255,7 @@ export default function ChatScreen({ route, navigation }: any) {
 					}
 				};
 				await drainOnce();
-				// Set lastReadAt on entering chat
+				// Final ensure lastReadAt on entering chat
 				try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
 			} catch (e: any) {
 				setError(e?.message ?? 'Failed to load chat');
@@ -201,6 +276,15 @@ export default function ChatScreen({ route, navigation }: any) {
 					}
 				} catch {}
 			}
+			if (isFocused) {
+				try {
+					const me = await getCurrentUser();
+					const cidNow = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+					if (cidNow) {
+						await setMyLastRead(cidNow, me.userId, new Date().toISOString());
+					}
+				} catch {}
+			}
 		})();
 	}, [isFocused]);
 
@@ -208,7 +292,7 @@ export default function ChatScreen({ route, navigation }: any) {
 		try {
 			setError(null);
 			const trimmed = input.trim();
-			if (!trimmed) { try { console.log('[chat] skip send: empty input'); } catch {} return; }
+			if (!trimmed) { return; }
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
 			const localId = generateLocalId('msg');
@@ -262,13 +346,13 @@ export default function ChatScreen({ route, navigation }: any) {
 		}
 	};
 
-	const onSendImage = async () => {
+			const onSendImage = async () => {
 		try {
 			setError(null);
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
 			const url = imageUrl.trim();
-			if (!url) { try { console.log('[chat] skip image send: empty URL'); } catch {} return; }
+			if (!url) { return; }
 			const localId = generateLocalId('img');
 			const optimistic: any = {
 				id: localId,
@@ -285,10 +369,10 @@ export default function ChatScreen({ route, navigation }: any) {
 			try {
 				// For MVP, send the URL as content reference; uploading to S3 can be added later
 				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
-				try { console.log('[chat] image send ok', { id: saved?.id }); } catch {}
+				try {} catch {}
 				setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
 			} catch (sendErr) {
-				try { console.log('[chat] image send error'); } catch {}
+				try {} catch {}
 				const key = `outbox:${cid}`;
 				const raw = await AsyncStorage.getItem(key);
 				const outbox = raw ? JSON.parse(raw) : [];
@@ -321,7 +405,7 @@ export default function ChatScreen({ route, navigation }: any) {
 		<View style={{ flex: 1 }}>
 			<View style={{ flexDirection: 'row', alignItems: 'center' }}>
 				<View style={{ flex: 1 }}>
-					<ChatHeader username={otherUserId} online={undefined} subtitle={undefined} />
+					<ChatHeader username={otherUserId} online={undefined} subtitle={undefined} profile={otherProfile ? { userId: otherProfile.userId, firstName: otherProfile.firstName, lastName: otherProfile.lastName, email: otherProfile.email, avatarColor: otherProfile.avatarColor } : undefined} />
 				</View>
 				<TouchableOpacity
 					onPress={async () => {
@@ -343,7 +427,13 @@ export default function ChatScreen({ route, navigation }: any) {
 												try { typingSubRef.current?.unsubscribe?.(); } catch {}
 												try { receiptsSubRef.current?.unsubscribe?.(); } catch {}
 												// Navigate back to list (for local deleter)
-												try { navigation.goBack?.(); } catch {}
+												try {
+													if (navigation.canGoBack?.()) {
+														navigation.goBack?.();
+													} else {
+														navigation.navigate?.('Conversations');
+													}
+												} catch {}
 												try { showToast('Conversation deleted'); } catch {}
 											} catch (e) {
 												setError((e as any)?.message || 'Delete failed');
@@ -362,6 +452,7 @@ export default function ChatScreen({ route, navigation }: any) {
 			{isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
 			<FlatList
 				inverted
+				ref={listRef}
 				data={messages}
 				keyExtractor={(item: any) => item.id}
 				removeClippedSubviews
@@ -369,18 +460,27 @@ export default function ChatScreen({ route, navigation }: any) {
 				windowSize={7}
 				maxToRenderPerBatch={12}
 				updateCellsBatchingPeriod={50}
-				maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+				maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 60 }}
 				onEndReachedThreshold={0.1}
+				onScrollBeginDrag={() => { isUserDraggingRef.current = true; }}
+				onMomentumScrollEnd={() => { isUserDraggingRef.current = false; }}
+				onScroll={(e: any) => {
+					try {
+						const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+						isNearBottomRef.current = y <= 80;
+					} catch {}
+				}}
 				onScrollEndDrag={async () => {
-					try { const me = await getCurrentUser(); const cidNow = providedConversationId || conversationIdFor(me.userId, otherUserId); debouncedSetLastRead(cidNow, me.userId); } catch {}
+					isUserDraggingRef.current = false;
+					try { const me = await getCurrentUser(); const cidNow = providedConversationId || conversationIdFor(me.userId, otherUserResolved || otherUserId); debouncedSetLastRead(cidNow, me.userId); } catch {}
 				}}
 				onEndReached={async () => {
 					if (isLoadingMore || !nextToken) return;
 					try {
 						setIsLoadingMore(true);
-						const me = await getCurrentUser();
-						const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
-						const cidMore = providedConversationId || conversationIdFor(me.userId, otherUserId);
+                        const me = await getCurrentUser();
+                        const cid = providedConversationId || conversationIdFor(me.userId, otherUserResolved || otherUserId);
+                        const cidMore = providedConversationId || conversationIdFor(me.userId, otherUserResolved || otherUserId);
 				const page: any = await listMessagesCompat(cidMore, 25, nextToken);
 				const older = page.items || [];
 				setNextToken(page.nextToken);
@@ -393,11 +493,23 @@ export default function ChatScreen({ route, navigation }: any) {
 					finally { setIsLoadingMore(false); }
 				}}
 				renderItem={({ item }: any) => (
-					<View style={{ padding: 8 }}>
-						{item.messageType === 'IMAGE' && item.attachments?.[0] ? (
-							<Image source={{ uri: item.attachments[0] }} style={{ width: 200, height: 200, borderRadius: 8 }} />
-						) : (
-							<TouchableOpacity onLongPress={async () => {
+						<View style={{ padding: 8, flexDirection: 'row', alignItems: 'flex-start' }}>
+                            {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() && item.senderId !== myId ? (
+								<View style={{ marginRight: 8 }}>
+                                    <Avatar
+                                        userId={item.senderId}
+                                        firstName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.firstName : undefined}
+                                        lastName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.lastName : undefined}
+                                        email={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.email : undefined}
+                                        color={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.avatarColor : undefined}
+                                        size={24}
+                                    />
+								</View>
+							) : null}
+							{item.messageType === 'IMAGE' && item.attachments?.[0] ? (
+								<Image source={{ uri: item.attachments[0] }} style={{ width: 200, height: 200, borderRadius: 8 }} />
+							) : (
+								<TouchableOpacity onLongPress={async () => {
 								try {
 									if (otherUserId && item.senderId) {
 										const me = await getCurrentUser();
@@ -419,20 +531,21 @@ export default function ChatScreen({ route, navigation }: any) {
 									setInfoText('Unable to load message info.');
 									setInfoVisible(true);
 								}
-							}}>
-								<Text>
-									{item.senderId === 'me' ? 'Me' : item.senderId}: {item.content} {item._localStatus ? `(${item._localStatus})` : ''}
-									{item.__status ? ' ' : ''}
-									{item.__status === 'sent' ? '✓' : null}
-									{item.__status === 'delivered' ? <Text style={{ color: '#6b7280' }}>✓✓</Text> : null}
-									{item.__status === 'read' ? <Text style={{ color: '#3b82f6' }}>✓✓</Text> : null}
-								</Text>
-								<Text style={{ color: '#6b7280', fontSize: 12 }}>
-									{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
-								</Text>
-							</TouchableOpacity>
-						)}
-					</View>
+								}}>
+																<Text>
+                                        {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? '' : `${item.senderId === myId ? 'Me' : item.senderId}: `}
+										{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
+										{item.__status ? ' ' : ''}
+										{item.__status === 'sent' ? '✓' : null}
+										{item.__status === 'delivered' ? <Text style={{ color: '#6b7280' }}>✓✓</Text> : null}
+										{item.__status === 'read' ? <Text style={{ color: '#3b82f6' }}>✓✓</Text> : null}
+									</Text>
+									<Text style={{ color: '#6b7280', fontSize: 12 }}>
+										{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
+									</Text>
+								</TouchableOpacity>
+							)}
+						</View>
 				)}
 			/>
 			<Modal visible={infoVisible} transparent animationType="fade" onRequestClose={() => setInfoVisible(false)}>

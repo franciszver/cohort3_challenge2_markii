@@ -14,7 +14,6 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
 
   const append = (msg: string, payload?: any) => {
     const line = payload ? `${msg} ${JSON.stringify(payload)}` : msg;
-    console.log(`[VerifyCode] ${line}`);
     setLog(prev => `${prev}${prev ? '\n' : ''}${line}`);
   };
 

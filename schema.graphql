@@ -115,6 +115,7 @@ type Mutation {
   updateMessage(condition: ModelMessageConditionInput, input: UpdateMessageInput!): Message
   updateMessageRead(condition: ModelMessageReadConditionInput, input: UpdateMessageReadInput!): MessageRead
   updateUser(condition: ModelUserConditionInput, input: UpdateUserInput!): User
+  updateUserProfile(input: UpdateUserProfileInput!): UserProfile
 }
 
 type Query {
@@ -143,6 +144,7 @@ type Query {
   syncUsers(filter: ModelUserFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelUserConnection
   lookupUserIdByUsername(username: String!): ID
   lookupUserIdByEmail(email: String!): ID
+  getUserProfile(userId: ID!): UserProfile
 }
 
 type Subscription {
@@ -223,6 +225,16 @@ enum UserStatus {
   BUSY
   OFFLINE
   ONLINE
+}
+
+type UserProfile {
+  userId: ID!
+  firstName: String
+  lastName: String
+  email: String!
+  avatarColor: String
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
 }
 
 input CreateConversationInput {
@@ -777,6 +789,12 @@ input UpdateUserInput {
   updatedAt: AWSDateTime
   username: String
   pushToken: String
+}
+
+input UpdateUserProfileInput {
+  firstName: String
+  lastName: String
+  avatarColor: String
 }
 
 

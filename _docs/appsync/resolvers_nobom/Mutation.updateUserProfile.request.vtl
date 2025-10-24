@@ -1,0 +1,46 @@
+#set($now = $util.time.nowISO8601())
+#set($email = $util.defaultIfNull($ctx.identity.claims.get("email"), $ctx.identity.username))
+
+#set($expr = "SET #updatedAt = :updatedAt, #createdAt = if_not_exists(#createdAt, :createdAt), #email = :email")
+#set($names = {
+  "#updatedAt" : "updatedAt",
+  "#createdAt" : "createdAt",
+  "#email" : "email"
+})
+#set($values = {
+  ":updatedAt" : {"S" : "$now"},
+  ":createdAt" : {"S" : "$now"},
+  ":email" : $util.dynamodb.toDynamoDB($email)
+})
+
+#if(!$util.isNull($ctx.args.input.firstName))
+  $util.qr($names.put("#firstName","firstName"))
+  $util.qr($values.put(":firstName", $util.dynamodb.toDynamoDB($ctx.args.input.firstName)))
+  #set($expr = $expr + ", #firstName = :firstName")
+#end
+
+#if(!$util.isNull($ctx.args.input.lastName))
+  $util.qr($names.put("#lastName","lastName"))
+  $util.qr($values.put(":lastName", $util.dynamodb.toDynamoDB($ctx.args.input.lastName)))
+  #set($expr = $expr + ", #lastName = :lastName")
+#end
+
+#if(!$util.isNull($ctx.args.input.avatarColor))
+  $util.qr($names.put("#avatarColor","avatarColor"))
+  $util.qr($values.put(":avatarColor", $util.dynamodb.toDynamoDB($ctx.args.input.avatarColor)))
+  #set($expr = $expr + ", #avatarColor = :avatarColor")
+#end
+
+{
+  "version": "2018-05-29",
+  "operation": "UpdateItem",
+  "key": {
+    "userId": $util.dynamodb.toDynamoDBJson($ctx.identity.sub)
+  },
+  "update": {
+    "expression": "$expr",
+    "expressionNames": $util.toJson($names),
+    "expressionValues": $util.toJson($values)
+  },
+  "returnValues": "ALL_NEW"
+}
