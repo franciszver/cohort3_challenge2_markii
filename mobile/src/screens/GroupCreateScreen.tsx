@@ -28,8 +28,8 @@ export default function GroupCreateScreen({ navigation }: any) {
 
   return (
     <View style={{ flex: 1, padding: 16 }}>
-      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>New Group</Text>
-      <TextInput placeholder="Group name" value={name} onChangeText={setName} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
+      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Start a chat</Text>
+      <TextInput placeholder="Chat name" value={name} onChangeText={setName} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
       <TextInput
         placeholder="Participant IDs (paste comma/newline separated)"
         value={participantIds}
@@ -39,10 +39,6 @@ export default function GroupCreateScreen({ navigation }: any) {
         autoCorrect={false}
         multiline
       />
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-        <Button title="Paste" onPress={async () => { try { const v = await Clipboard.getStringAsync(); setParticipantIds(prev => (prev ? `${prev}\n${v}` : v)); } catch {} }} />
-        <Button title="Clear" onPress={() => setParticipantIds('')} />
-      </View>
       <Button title="Create" onPress={onCreate} />
       {error ? <Text style={{ color: 'red', marginTop: 8 }}>{error}</Text> : null}
     </View>

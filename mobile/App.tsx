@@ -1,6 +1,7 @@
 ﻿import 'react-native-gesture-handler';
 import React, { useEffect } from 'react';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import { ThemeProvider } from './src/utils/theme';
 import { createStackNavigator } from '@react-navigation/stack';
 import AuthScreen from './src/screens/AuthScreen';
 import VerifyCodeScreen from './src/screens/VerifyCodeScreen';
@@ -28,6 +29,7 @@ export default function App() {
         const { status } = await Notifications.requestPermissionsAsync();
         if (getFlags().DEBUG_LOGS) console.log('[push] permission status', status);
         // Always set handler for local notifications
+        const { ENABLE_NOTIFICATIONS_UX } = getFlags();
         Notifications.setNotificationHandler({
           handleNotification: async () => ({
             // Prefer new fields over deprecated shouldShowAlert
@@ -35,16 +37,7 @@ export default function App() {
             shouldShowList: true,
             shouldShowAlert: true,
             shouldPlaySound: false,
-            shouldSetBadge: false,
-          } as any),
-        });
-        Notifications.setNotificationHandler({
-          handleNotification: async () => ({
-            shouldShowBanner: true,
-            shouldShowList: true,
-            shouldShowAlert: true,
-            shouldPlaySound: false,
-            shouldSetBadge: false,
+            shouldSetBadge: !!ENABLE_NOTIFICATIONS_UX,
           } as any),
         });
 
@@ -85,18 +78,20 @@ export default function App() {
   }, []);
 
   return (
-    <NavigationContainer ref={navRef}>
-      <Stack.Navigator initialRouteName="Auth">
-        <Stack.Screen name="Auth" component={AuthScreen} />
-        <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} />
-        <Stack.Screen name="ForgotPasswordRequest" component={ForgotPasswordRequestScreen} />
-        <Stack.Screen name="ForgotPasswordCode" component={ForgotPasswordCodeScreen} />
-        <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen name="Conversations" component={ConversationListScreen} />
-        <Stack.Screen name="GroupCreate" component={GroupCreateScreen} />
-        <Stack.Screen name="Chat" component={ChatScreen} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <ThemeProvider>
+      <NavigationContainer ref={navRef}>
+        <Stack.Navigator initialRouteName="Auth">
+          <Stack.Screen name="Auth" component={AuthScreen} />
+          <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} />
+          <Stack.Screen name="ForgotPasswordRequest" component={ForgotPasswordRequestScreen} />
+          <Stack.Screen name="ForgotPasswordCode" component={ForgotPasswordCodeScreen} />
+          <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />
+          <Stack.Screen name="Home" component={HomeScreen} />
+          <Stack.Screen name="Conversations" component={ConversationListScreen} />
+          <Stack.Screen name="GroupCreate" component={GroupCreateScreen} options={{ title: 'Start a chat' }} />
+          <Stack.Screen name="Chat" component={ChatScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </ThemeProvider>
   );
 }
