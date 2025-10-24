@@ -142,7 +142,7 @@ type Query {
   syncMessages(filter: ModelMessageFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelMessageConnection
   syncUsers(filter: ModelUserFilterInput, lastSync: AWSTimestamp, limit: Int, nextToken: String): ModelUserConnection
   lookupUserIdByUsername(username: String!): ID
-  lookupUserIdByEmail(email: String!): ID\n  lookupUserIdByEmail(email: String!): ID
+  lookupUserIdByEmail(email: String!): ID
 }
 
 type Subscription {
@@ -178,6 +178,7 @@ type User {
   status: UserStatus
   updatedAt: AWSDateTime!
   username: String!
+  pushToken: String
 }
 
 type TypingEvent {
@@ -287,6 +288,7 @@ input CreateUserInput {
   status: UserStatus
   updatedAt: AWSDateTime
   username: String!
+  pushToken: String
 }
 
 input DeleteConversationInput {
@@ -774,6 +776,7 @@ input UpdateUserInput {
   status: UserStatus
   updatedAt: AWSDateTime
   username: String
+  pushToken: String
 }
 
 

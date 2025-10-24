@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput } from 'react-native';
 import { getCurrentUser, signOut } from 'aws-amplify/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation } from '../graphql/conversations';
 import { batchGetUsersCached } from '../graphql/users';
@@ -61,6 +62,12 @@ export default function ConversationListScreen({ navigation }: any) {
         });
         next = parts?.nextToken || undefined;
       } while (next);
+      // Fallback: also scan conversations by participants array containing me
+      try {
+        const resList: any = await listConversationsByParticipant(me.userId, 50);
+        const items = resList?.data?.listConversations?.items || [];
+        items.forEach((c: any) => { if (c?.id) convIdsSet.add(c.id); });
+      } catch {}
       const convIds = Array.from(convIdsSet);
       const convs: any[] = [];
       // Set up foreground notifications for new messages in these conversations
@@ -104,7 +111,28 @@ export default function ConversationListScreen({ navigation }: any) {
             next: async (evt: any) => {
               const m = evt?.data?.onCreateMessage;
               if (!m) return;
-              // Throttle per conversation to avoid spam when many arrive
+              // Update row preview immediately
+              setItems(prev => {
+                let touched = false;
+                const next = prev.map((c: any) => {
+                  if (c.id === id) {
+                    touched = true;
+                    const unread = m.senderId === myId ? (c._unread || 0) : 1;
+                    return { ...c, _latest: { ...m }, _unread: unread };
+                  }
+                  return c;
+                });
+                if (!touched) return prev;
+                // Re-sort by latest createdAt
+                next.sort((a: any, b: any) => {
+                  const at = a?._latest?.createdAt ? new Date(a._latest.createdAt).getTime() : 0;
+                  const bt = b?._latest?.createdAt ? new Date(b._latest.createdAt).getTime() : 0;
+                  return bt - at;
+                });
+                return next;
+              });
+
+              // Throttle foreground notification per conversation
               const now = Date.now();
               const last = lastNotifyAtRef.current[id] || 0;
               if (now - last < 1500) return;
@@ -117,9 +145,8 @@ export default function ConversationListScreen({ navigation }: any) {
                   trigger: null,
                 });
               } catch {}
-              // In-app banner for quick attention when user is not in chat
+              // In-app banner
               setBanner({ conversationId: id, preview: m.content || 'New message' });
-              // Auto-hide after a short delay
               setTimeout(() => {
                 setBanner(curr => (curr && curr.conversationId === id ? null : curr));
               }, 4000);
@@ -133,8 +160,28 @@ export default function ConversationListScreen({ navigation }: any) {
         const r: any = await getConversation(id);
         if (r?.data?.getConversation) {
           const c = r.data.getConversation;
+          // Ensure my participant record exists (self-heal missing participant rows)
+          try { await ensureParticipant(c.id, me.userId, 'MEMBER'); } catch {}
           // latest message preview
           const latest = await getLatestMessageInConversation(c.id);
+          // Override with local cache if it has a newer message (V2 writes)
+          let latestLocal: any = null;
+          try {
+            const cached = await AsyncStorage.getItem(`history:${c.id}`);
+            if (cached) {
+              const arr = JSON.parse(cached);
+              if (Array.isArray(arr) && arr[0]) {
+                latestLocal = arr[0];
+              }
+            }
+          } catch {}
+          const latestFinal = (() => {
+            try {
+              const lt = latest?.createdAt ? new Date(latest.createdAt).getTime() : 0;
+              const lc = latestLocal?.createdAt ? new Date(latestLocal.createdAt).getTime() : 0;
+              return lc > lt ? latestLocal : latest;
+            } catch { return latest || latestLocal; }
+          })();
           // fetch participant subset (first 3 for avatars)
           const partsRes: any = await listParticipantsForConversation(c.id, 3);
           const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
@@ -147,7 +194,7 @@ export default function ConversationListScreen({ navigation }: any) {
           } else if (latest?.createdAt && !lastRead) {
             unread = 1;
           }
-          convs.push({ ...c, _latest: latest, _participants: parts, _users: userMap, _unread: unread });
+          convs.push({ ...c, _latest: latestFinal, _participants: parts, _users: userMap, _unread: unread });
         }
       }
       // Sort by latest activity (latest message createdAt desc)
@@ -178,6 +225,55 @@ export default function ConversationListScreen({ navigation }: any) {
       toastUnsubRef.current = null;
     };
   }, [load]));
+
+  // Subscribe to newly created participant records for me to auto-add new conversations
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = await getCurrentUser();
+        const client: any = generateClient();
+        const subGql = /* GraphQL */ `
+          subscription OnCreateConversationParticipant($filter: ModelSubscriptionConversationParticipantFilterInput) {
+            onCreateConversationParticipant(filter: $filter) { conversationId userId joinedAt }
+          }
+        `;
+        const op = client.graphql({ query: subGql, variables: { filter: { userId: { eq: me.userId } } }, authMode: 'userPool' }) as any;
+        const sub = op.subscribe({
+          next: async (evt: any) => {
+            const p = evt?.data?.onCreateConversationParticipant;
+            try { console.log('[conversations] onCreateConversationParticipant', p); } catch {}
+            if (!p?.conversationId) return;
+            try {
+              const r: any = await getConversation(p.conversationId);
+              const conv = r?.data?.getConversation;
+              if (!conv?.id) return;
+              const latest = await getLatestMessageInConversation(conv.id);
+              const partsRes: any = await listParticipantsForConversation(conv.id, 3);
+              const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+              const userMap = await batchGetUsersCached(parts.map((x: any) => x.userId));
+              setItems(prev => [{ ...conv, _latest: latest, _participants: parts, _users: userMap, _unread: 1 }, ...prev.filter(c => c.id !== conv.id)]);
+            } catch {}
+          },
+          error: () => {},
+        });
+        notifySubsRef.current.push(sub);
+      } catch {}
+    })();
+    return () => {
+      notifySubsRef.current.forEach(s => { try { s?.unsubscribe?.(); } catch {} });
+    };
+  }, []);
+
+  // Lightweight polling fallback to pick up new conversations if subscription misses
+  useEffect(() => {
+    const id = setInterval(() => {
+      try {
+        // quiet poll
+        load();
+      } catch {}
+    }, 5000);
+    return () => clearInterval(id);
+  }, [load]);
 
   return (
     <View style={{ flex: 1, padding: 12 }}>
@@ -211,7 +307,7 @@ export default function ConversationListScreen({ navigation }: any) {
                   {item.name || (item.isGroup ? 'Group' : (item._users?.[item._participants?.find((p:any)=>true)?.userId]?.displayName || item._users?.[item._participants?.find((p:any)=>true)?.userId]?.email || 'Chat'))}
                 </Text>
                 <Text style={{ color: '#6b7280' }} numberOfLines={1}>
-                  {(item._latest?.content || '[no messages]')} · {item._latest?.createdAt ? formatTimestamp(item._latest.createdAt) : ''}
+                  {(item._latest?.content || 'yes?')} · {item._latest?.createdAt ? formatTimestamp(item._latest.createdAt) : ''}
                 </Text>
               </View>
               {item._unread ? (
@@ -276,9 +372,11 @@ export default function ConversationListScreen({ navigation }: any) {
                     // Create a fresh unique 1:1 conversation id to start a new thread
                     const freshId = `${[a, b].sort().join('#')}-${Date.now()}`;
                     await ensureDirectConversation(freshId, a, b);
+                    // One-time refresh to ensure the new conversation appears immediately
+                    try { await load(); } catch {}
                     setShowSolo(false);
                     setSoloBusy(false);
-                    navigation.navigate('Chat', { conversationId: freshId });
+                    navigation.navigate('Chat', { conversationId: freshId, otherUserSub: b });
                   } catch {
                     setSoloBusy(false);
                   }

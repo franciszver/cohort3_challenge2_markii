@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
 import { updateLastSeen } from '../graphql/users';
-import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted } from '../graphql/conversations';
+import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
@@ -207,26 +207,48 @@ export default function ChatScreen({ route, navigation }: any) {
 	const onSend = async () => {
 		try {
 			setError(null);
+			const trimmed = input.trim();
+			if (!trimmed) { try { console.log('[chat] skip send: empty input'); } catch {} return; }
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
 			const localId = generateLocalId('msg');
+            // quiet start
 			const optimistic: any = {
 				id: localId,
 				conversationId: cid,
 				createdAt: new Date().toISOString(),
 				senderId: me.userId,
-				content: input,
+				content: trimmed,
 				messageType: 'TEXT',
 				_localStatus: 'PENDING',
 			};
-			setMessages(prev => [optimistic, ...prev]);
+			setMessages(prev => {
+				// Dedup by id in case rapid sends race
+				const next = [optimistic, ...prev.filter(m => m.id !== localId)];
+				return next;
+			});
 			setInput('');
 			try {
 				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
 				// Opportunistic presence update on outbound send
 				try { await updateLastSeen(me.userId); } catch {}
-				setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
-			} catch (sendErr) {
+				// Update conversation preview so the list shows latest text
+				try { const when = new Date().toISOString(); await updateConversationLastMessage(cid, optimistic.content, when); } catch {}
+				setMessages(prev => {
+					const replaced = prev.map(m => (m.id === localId ? saved : m));
+					// Guard against duplicate ids when backend echoes a message with same id
+					const seen = new Set<string>();
+					const dedup = [] as any[];
+					for (const m of replaced) { if (!seen.has(m.id)) { seen.add(m.id); dedup.push(m); } }
+					return dedup;
+				});
+                // quiet ok
+			} catch (sendErr: any) {
+                // quiet error logs
+				try {
+					const errMsg = (sendErr?.errors?.[0]?.message) || sendErr?.message || 'Send failed';
+					setError(errMsg);
+				} catch {}
 				const key = `outbox:${cid}`;
 				const raw = await AsyncStorage.getItem(key);
 				const outbox = raw ? JSON.parse(raw) : [];
@@ -246,7 +268,7 @@ export default function ChatScreen({ route, navigation }: any) {
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
 			const url = imageUrl.trim();
-			if (!url) return;
+			if (!url) { try { console.log('[chat] skip image send: empty URL'); } catch {} return; }
 			const localId = generateLocalId('img');
 			const optimistic: any = {
 				id: localId,
@@ -263,8 +285,10 @@ export default function ChatScreen({ route, navigation }: any) {
 			try {
 				// For MVP, send the URL as content reference; uploading to S3 can be added later
 				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
+				try { console.log('[chat] image send ok', { id: saved?.id }); } catch {}
 				setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
 			} catch (sendErr) {
+				try { console.log('[chat] image send error'); } catch {}
 				const key = `outbox:${cid}`;
 				const raw = await AsyncStorage.getItem(key);
 				const outbox = raw ? JSON.parse(raw) : [];
@@ -360,11 +384,11 @@ export default function ChatScreen({ route, navigation }: any) {
 				const page: any = await listMessagesCompat(cidMore, 25, nextToken);
 				const older = page.items || [];
 				setNextToken(page.nextToken);
-						setMessages(prev => {
-							const next = mergeDedupSort(prev, older);
-							AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
-							return next;
-						});
+					setMessages(prev => {
+						const next = mergeDedupSort(prev, older);
+						AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
+						return next;
+					});
 					} catch {}
 					finally { setIsLoadingMore(false); }
 				}}

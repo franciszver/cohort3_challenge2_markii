@@ -22,6 +22,16 @@ export async function updateLastSeen(userId: string, lastSeenISO?: string) {
   return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
 }
 
+export async function updateMyPushToken(userId: string, pushToken: string) {
+  const mutation = /* GraphQL */ `
+    mutation UpdateUser($input: UpdateUserInput!) {
+      updateUser(input: $input) { id pushToken updatedAt }
+    }
+  `;
+  const input = { id: userId, pushToken } as const;
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+}
+
 export function subscribeUserPresence(userId: string) {
   const subscription = /* GraphQL */ `
     subscription OnUpdateUser($filter: ModelSubscriptionUserFilterInput) {

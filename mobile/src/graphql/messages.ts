@@ -422,11 +422,15 @@ export async function sendTextMessageCompat(
     if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root ok', { id: msg?.id });
     return msg;
   } catch (e) {
-    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat root failed, trying VTL', { message: (e as any)?.message });
-    const res: any = await sendMessageVtl(conversationId, content);
-    const mapped = mapVtlMessageToRootShape(res?.data?.sendMessage || {});
-    if (getFlags().DEBUG_LOGS) console.log('[messages] sendTextMessageCompat VTL ok', { id: mapped?.id });
-    return mapped;
+    try {
+      console.log('[messages] sendTextMessageCompat root failed', {
+        message: (e as any)?.message,
+        errors: (e as any)?.errors,
+        raw: safe(e),
+      });
+    } catch {}
+    // Do not attempt legacy VTL fallback; surface the root error to caller
+    throw e;
   }
 }
 
