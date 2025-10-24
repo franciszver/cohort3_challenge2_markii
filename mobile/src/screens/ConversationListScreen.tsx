@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput } from 'react-native';
+import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput, RefreshControl } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
@@ -33,6 +33,7 @@ export default function ConversationListScreen({ navigation }: any) {
   const [soloOtherId, setSoloOtherId] = useState('');
   const [soloBusy, setSoloBusy] = useState(false);
   const [banner, setBanner] = useState<{ conversationId: string; preview: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const notifySubsRef = useRef<any[]>([]);
   const lastNotifyAtRef = useRef<Record<string, number>>({});
   const toastUnsubRef = useRef<null | (() => void)>(null);
@@ -446,6 +447,9 @@ export default function ConversationListScreen({ navigation }: any) {
         windowSize={7}
         maxToRenderPerBatch={12}
         updateCellsBatchingPeriod={50}
+        refreshControl={(() => { try { const { ENABLE_MESSAGES_PULL_TO_REFRESH } = getFlags(); return ENABLE_MESSAGES_PULL_TO_REFRESH ? (
+          <RefreshControl refreshing={refreshing} onRefresh={async () => { try { setRefreshing(true); await load(true); } catch {} finally { setRefreshing(false); } }} />
+        ) : undefined; } catch { return undefined; } })()}
         renderItem={({ item }) => (
           ENABLE_CONVERSATION_LIST_UX ? (
             <Swipeable

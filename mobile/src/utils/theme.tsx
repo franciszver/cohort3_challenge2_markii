@@ -17,14 +17,14 @@ type Theme = {
 
 const Light: Theme = {
   colors: {
-    background: '#ffffff',
-    surface: '#ffffff',
-    textPrimary: '#111827',
-    textSecondary: '#6b7280',
-    primary: '#3b82f6',
-    bubbleMe: '#dcf8c6',
-    bubbleOther: '#ffffff',
-    border: '#e5e7eb',
+    background: '#F0F9FF',
+    surface: '#FFFFFF',
+    textPrimary: '#0F172A',
+    textSecondary: '#475569',
+    primary: '#38BDF8',
+    bubbleMe: '#E0F2FE',
+    bubbleOther: '#FFFFFF',
+    border: '#E2E8F0',
   },
 };
 
@@ -34,7 +34,7 @@ const Dark: Theme = {
     surface: '#111111',
     textPrimary: '#e5e7eb',
     textSecondary: '#9ca3af',
-    primary: '#60a5fa',
+    primary: '#38BDF8',
     bubbleMe: '#1f2937',
     bubbleOther: '#111827',
     border: '#1f2937',
@@ -44,9 +44,12 @@ const Dark: Theme = {
 const ThemeContext = createContext<Theme>(Light);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { ENABLE_THEME } = getFlags();
+  const { ENABLE_THEME, ENABLE_THEME_SKY } = getFlags();
   const colorScheme = ENABLE_THEME ? Appearance.getColorScheme() : 'light';
-  const theme = useMemo(() => (colorScheme === 'dark' ? Dark : Light), [colorScheme]);
+  const theme = useMemo(() => {
+    // For now, ENABLE_THEME_SKY just swaps the light palette to sky colors (already applied).
+    return colorScheme === 'dark' ? Dark : Light;
+  }, [colorScheme, ENABLE_THEME_SKY]);
   return <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>;
 }
 

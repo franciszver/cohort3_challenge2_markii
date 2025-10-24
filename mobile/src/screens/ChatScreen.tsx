@@ -6,6 +6,8 @@ import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
+import { AppState } from 'react-native';
 import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
 import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, listParticipantsForConversation } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
@@ -41,7 +43,8 @@ export default function ChatScreen({ route, navigation }: any) {
 	const [isTyping, setIsTyping] = useState(false);
 	const [nextToken, setNextToken] = useState<string | undefined>(undefined);
 	const [isLoadingMore, setIsLoadingMore] = useState(false);
-	const retryTimerRef = useRef<any>(null);
+    const retryTimerRef = useRef<any>(null);
+    const drainIntervalRef = useRef<any>(null);
 	const didInitialScrollRef = useRef(false);
 	const isNearBottomRef = useRef(true);
 	const isUserDraggingRef = useRef(false);
@@ -229,7 +232,7 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 					deleteSubRef.current = delSub;
 				} catch {}
 
-				// drain outbox with retry/backoff
+                // drain outbox with retry/backoff (one-time on mount)
 				const drainOnce = async () => {
 					const outboxRaw = await AsyncStorage.getItem(`outbox:${cid}`);
 					const outbox = outboxRaw ? JSON.parse(outboxRaw) : [];
@@ -256,6 +259,31 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 					}
 				};
 				await drainOnce();
+                // Periodic drainer with backoff + network/appstate triggers
+                try {
+                    const { ENABLE_OUTBOX_DRAINER } = getFlags();
+                    if (ENABLE_OUTBOX_DRAINER) {
+                        const tick = async () => {
+                            try {
+                                const state = await NetInfo.fetch();
+                                const online = !(state.isConnected === false || state.isInternetReachable === false);
+                                if (!online) return;
+                                const raw = await AsyncStorage.getItem(`outbox:${cid}`);
+                                const arr = raw ? JSON.parse(raw) : [];
+                                const now = Date.now();
+                                const ready = arr.filter((j: any) => !j.nextTryAt || j.nextTryAt <= now);
+                                if (ready.length) await drainOnce();
+                            } catch {}
+                        };
+                        drainIntervalRef.current = setInterval(tick, 4000);
+                        const unsubNet = NetInfo.addEventListener(() => { tick(); });
+                        const onApp = (s: any) => { if (s === 'active') tick(); };
+                        const subApp = AppState.addEventListener('change', onApp);
+                        // store unsubscribers in refs to clean up
+                        (drainIntervalRef as any).unsubNet = unsubNet;
+                        (drainIntervalRef as any).subApp = subApp;
+                    }
+                } catch {}
 				// Final ensure lastReadAt on entering chat
 				try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
 			} catch (e: any) {
@@ -276,7 +304,7 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 					}
 				} catch {}
 		})();
-		return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); presenceSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); };
+        return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); presenceSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); try { if (drainIntervalRef.current) clearInterval(drainIntervalRef.current); } catch {}; try { (drainIntervalRef as any).unsubNet?.(); } catch {}; try { (drainIntervalRef as any).subApp?.remove?.(); } catch {}; };
 	}, []);
 
 	// Final trailing lastRead write on blur

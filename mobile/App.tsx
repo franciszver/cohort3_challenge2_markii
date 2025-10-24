@@ -2,6 +2,7 @@
 import React, { useEffect } from 'react';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { ThemeProvider } from './src/utils/theme';
+import ErrorBoundary from './src/components/ErrorBoundary';
 import { createStackNavigator } from '@react-navigation/stack';
 import AuthScreen from './src/screens/AuthScreen';
 import VerifyCodeScreen from './src/screens/VerifyCodeScreen';
@@ -12,6 +13,7 @@ import GroupCreateScreen from './src/screens/GroupCreateScreen';
 import ForgotPasswordRequestScreen from './src/screens/ForgotPasswordRequestScreen';
 import ForgotPasswordCodeScreen from './src/screens/ForgotPasswordCodeScreen';
 import ForgotPasswordNewPasswordScreen from './src/screens/ForgotPasswordNewPasswordScreen';
+import ForgotPasswordLinearScreen from './src/screens/ForgotPasswordLinearScreen';
 import * as Notifications from 'expo-notifications';
 import { getFlags } from './src/utils/flags';
 import Constants from 'expo-constants';
@@ -80,17 +82,20 @@ export default function App() {
   return (
     <ThemeProvider>
       <NavigationContainer ref={navRef}>
-        <Stack.Navigator initialRouteName="Auth">
-          <Stack.Screen name="Auth" component={AuthScreen} />
-          <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} />
-          <Stack.Screen name="ForgotPasswordRequest" component={ForgotPasswordRequestScreen} />
-          <Stack.Screen name="ForgotPasswordCode" component={ForgotPasswordCodeScreen} />
-          <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />
-          <Stack.Screen name="Home" component={HomeScreen} />
-          <Stack.Screen name="Conversations" component={ConversationListScreen} />
-          <Stack.Screen name="GroupCreate" component={GroupCreateScreen} options={{ title: 'Start a chat' }} />
-          <Stack.Screen name="Chat" component={ChatScreen} />
-        </Stack.Navigator>
+        <ErrorBoundary>
+          <Stack.Navigator initialRouteName="Auth">
+            <Stack.Screen name="Auth" component={AuthScreen} />
+            <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} />
+            <Stack.Screen name="ForgotPasswordRequest" component={ForgotPasswordRequestScreen} />
+            <Stack.Screen name="ForgotPasswordCode" component={ForgotPasswordCodeScreen} />
+            <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />
+            <Stack.Screen name="ForgotPasswordLinear" component={ForgotPasswordLinearScreen} />
+            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="Conversations" component={ConversationListScreen} />
+            <Stack.Screen name="GroupCreate" component={GroupCreateScreen} options={{ title: 'Start a chat' }} />
+            <Stack.Screen name="Chat" component={ChatScreen} />
+          </Stack.Navigator>
+        </ErrorBoundary>
       </NavigationContainer>
     </ThemeProvider>
   );
