@@ -6,7 +6,7 @@
 Before actions in PowerShell:
 
 ```powershell
-$env:AWS_PROFILE='ciscodg@gmail'
+$env:AWS_PROFILE='my-aws-profile'
 ```
 
 Attach resolvers:

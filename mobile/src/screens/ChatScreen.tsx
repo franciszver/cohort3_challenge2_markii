@@ -15,6 +15,7 @@ import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
 import { generateLocalId } from '../utils/ids';
 import { getFlags } from '../utils/flags';
+import Constants from 'expo-constants';
 import { getUserProfile } from '../graphql/profile';
 import { getUserById } from '../graphql/users';
 import Avatar from '../components/Avatar';
@@ -59,6 +60,8 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 const [otherLastSeen, setOtherLastSeen] = useState<string | undefined>(undefined);
 const [isSendingMsg, setIsSendingMsg] = useState(false);
 const [isSendingImg, setIsSendingImg] = useState(false);
+const [assistantPending, setAssistantPending] = useState(false);
+const assistantTimerRef = useRef<any>(null);
 
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
@@ -113,17 +116,20 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 				// Set lastReadAt immediately on entering chat
 				try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
 				// subscribe to new messages in this conversation (first, to avoid missing messages)
-				const subscribe = subscribeMessagesCompat(cid);
+                const subscribe = subscribeMessagesCompat(cid);
 				const sub = subscribe({
 					next: async (evt: any) => {
-						const m = evt.data.onMessageInConversation;
+						try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[sub] evt', evt); } catch {}
+						const m = evt?.data?.onMessageInConversation;
+						if (!m || !m.id) { try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[sub] skip invalid message', m); } catch {} ; return; }
 						// Opportunistic presence update on inbound activity
 						try { const meNow = await getCurrentUser(); await updateLastSeen(meNow.userId); } catch {}
-						setMessages(prev => {
+                        setMessages(prev => {
 							const next = mergeDedupSort(prev, [m]);
 							AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
 							return next;
 						});
+                        try { if (m?.senderId === 'assistant-bot') setAssistantPending(false); } catch {}
 						try { await markDelivered(m.id, me.userId); } catch {}
 						if (m.senderId !== me.userId) {
 							try { await markRead(m.id, me.userId); } catch {}
@@ -385,7 +391,45 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 			}
 			const snapshot = (prev => [optimistic, ...prev])(messages);
 			AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
-			try { const { ENABLE_CHAT_UX } = getFlags(); if (ENABLE_CHAT_UX) await AsyncStorage.removeItem(`draft:${cid}`); } catch {}
+            try { const { ENABLE_CHAT_UX } = getFlags(); if (ENABLE_CHAT_UX) await AsyncStorage.removeItem(`draft:${cid}`); } catch {}
+			// Assistant hook: if this is an assistant conversation, ping the agent endpoint (non-blocking)
+			try {
+				const { ASSISTANT_ENABLED } = getFlags();
+				if (ASSISTANT_ENABLED && (providedConversationId || '').startsWith('assistant::')) {
+					const extra: any = Constants.expoConfig?.extra || (Constants as any).manifest?.extra || {};
+					const base = (extra.ASSISTANT_ENDPOINT || '').replace(/\/$/, '');
+					if (base) {
+						const req = { requestId: localId, conversationId: cid, userId: me.userId, text: optimistic.content };
+                        try {
+                            const { DEBUG_LOGS } = getFlags();
+                            if (DEBUG_LOGS) {
+                                try { console.log('[assistant] POST', `${base}/agent/weekend-plan`, req); } catch {}
+                            }
+                            // Attach Cognito ID token so Lambda can call AppSync with the same JWT
+                            let jwt: string | undefined = undefined;
+                            try {
+                                const session: any = await (await import('aws-amplify/auth')).fetchAuthSession();
+                                jwt = session?.tokens?.idToken?.toString?.() || session?.tokens?.idToken?.toString?.call(session.tokens.idToken);
+                            } catch {}
+                            const body = { ...req, ...(jwt ? { jwt } : {}) } as any;
+                            const res = await fetch(`${base}/agent/weekend-plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                            // soft log network status in UI footer if non-200
+                            if (!res.ok) {
+                                try { setError(`assistant endpoint ${res.status}`); } catch {}
+                                if (DEBUG_LOGS) {
+                                    try { console.log('[assistant] POST status', res.status, await res.text().catch(()=>'')); } catch {}
+                                }
+                            }
+                        } catch (e:any) {
+                            try { setError('assistant endpoint unreachable'); } catch {}
+                            try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[assistant] POST error', e?.message || e); } catch {}
+                        }
+                        setAssistantPending(true);
+                        try { if (assistantTimerRef.current) clearTimeout(assistantTimerRef.current); } catch {}
+                        assistantTimerRef.current = setTimeout(() => { try { setAssistantPending(false); } catch {} }, 8000);
+					}
+				}
+			} catch {}
 		} catch (e: any) {
 			setError(e?.message ?? 'Send failed');
 		}
@@ -512,7 +556,10 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 					<Text style={{ color: '#ef4444', fontWeight: '600' }}>Delete</Text>
 				</TouchableOpacity>
 			</View>
-			{isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
+            {isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
+            {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
+                <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>Assistant is thinking…</Text>
+            ) : null}
 			<FlatList
 				inverted
 				ref={listRef}

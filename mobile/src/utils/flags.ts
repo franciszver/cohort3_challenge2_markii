@@ -25,6 +25,8 @@ type Flags = {
   ENABLE_MESSAGES_PULL_TO_REFRESH: boolean;
   PRESENCE_HEARTBEAT_MS: number;
   NOTIFY_RATE_LIMIT_PER_MINUTE: number;
+  // Assistant MVP flags
+  ASSISTANT_ENABLED: boolean;
 };
 
 let _flags: Flags | null = null;
@@ -56,6 +58,7 @@ export function getFlags(): Flags {
     ENABLE_MESSAGES_PULL_TO_REFRESH: toBool(extra.ENABLE_MESSAGES_PULL_TO_REFRESH, true),
     PRESENCE_HEARTBEAT_MS: toNum(extra.PRESENCE_HEARTBEAT_MS, 30000),
     NOTIFY_RATE_LIMIT_PER_MINUTE: toNum(extra.NOTIFY_RATE_LIMIT_PER_MINUTE, 10),
+    ASSISTANT_ENABLED: toBool(extra.ASSISTANT_ENABLED, false),
   };
   return _flags;
 }

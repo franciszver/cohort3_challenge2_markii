@@ -4,7 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
-import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead } from '../graphql/conversations';
+import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead, createConversation } from '../graphql/conversations';
 import { batchGetUsersCached, getUserById } from '../graphql/users';
 import { batchGetProfilesCached } from '../graphql/profile';
 import { getLatestMessageInConversation } from '../graphql/messages';
@@ -401,6 +401,41 @@ export default function ConversationListScreen({ navigation }: any) {
             autoCapitalize="none"
             clearButtonMode="while-editing"
           />
+        </View>
+      ) : null}
+      {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() ? (
+        <View style={{ marginBottom: 12 }}>
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                const me = await getCurrentUser();
+                const cid = `assistant::${me.userId}`;
+                try {
+                  const r: any = await getConversation(cid);
+                  const exists = !!r?.data?.getConversation?.id;
+                  if (!exists) {
+                    try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
+                    try { await load(true); } catch {}
+                  }
+                } catch {
+                  try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
+                }
+                navigation.navigate('Chat', { conversationId: cid });
+              } catch {}
+            }}
+            accessibilityLabel="Open Assistant"
+            style={{ borderWidth: 1, borderColor: '#d1d5db', padding: 12, borderRadius: 8, backgroundColor: '#f9fafb' }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 12, color: '#374151' }}>AI</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '600' }}>Assistant</Text>
+                <Text style={{ color: '#6b7280' }} numberOfLines={1}>Plan weekend activities • Try saying “Hello”</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
         </View>
       ) : null}
       {error ? (

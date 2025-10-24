@@ -3,6 +3,8 @@
 **/.env
 **/.env.*
 !**/.env.example
+env.json
+!env.example.json
 
 **/amplify/**
 
