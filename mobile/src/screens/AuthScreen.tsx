@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Button } from 'react-native';
 import { signUp, confirmSignUp, signIn, fetchAuthSession, getCurrentUser, signOut } from 'aws-amplify/auth';
+import { getFlags } from '../utils/flags';
+import { ensureProfileSeed } from '../graphql/profile';
+import { colorForId } from '../components/Avatar';
 import Constants from 'expo-constants';
 
 export default function AuthScreen({ navigation }: any) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+	const [email, setEmail] = useState('');
+	const [password, setPassword] = useState('');
+	const [firstName, setFirstName] = useState('');
+	const [lastName, setLastName] = useState('');
 	const [code, setCode] = useState('');
   const [log, setLog] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +26,6 @@ export default function AuthScreen({ navigation }: any) {
 
   const appendLog = (message: string, payload?: unknown) => {
     const line = payload !== undefined ? `${message} ${safe(payload)}` : message;
-    console.log(`[AuthScreen] ${line}`);
     setLog(prev => `${prev}${prev ? '\n' : ''}${line}`);
   };
 
@@ -42,7 +46,7 @@ export default function AuthScreen({ navigation }: any) {
     setError(null);
     appendLog('signUp start', { email });
     try {
-      const res = await signUp({ username: email.trim(), password, options: { userAttributes: { email: email.trim() } } });
+      const res = await signUp({ username: email.trim(), password, options: { userAttributes: { email: email.trim(), given_name: firstName.trim(), family_name: lastName.trim() } } });
       appendLog('signUp success', res);
       navigation.navigate('VerifyCode', { email: email.trim(), password });
     } catch (e: any) {
@@ -82,6 +86,15 @@ export default function AuthScreen({ navigation }: any) {
       } catch (se) {
         appendLog('fetchAuthSession error', se as any);
       }
+      // Seed UserProfile softly (flagged)
+      try {
+        const { ENABLE_PROFILES } = getFlags();
+        if (ENABLE_PROFILES) {
+          const me = await getCurrentUser();
+          const avatar = colorForId(me.userId);
+          await ensureProfileSeed(me.userId, { firstName: firstName.trim() || undefined, lastName: lastName.trim() || undefined, avatarColor: avatar });
+        }
+      } catch {}
       navigation.replace('Conversations');
     } catch (e: any) {
       appendLog('signIn error', { name: e?.name, message: e?.message, code: e?.code, raw: e, stack: e?.stack, cause: e?.cause });
@@ -94,9 +107,13 @@ export default function AuthScreen({ navigation }: any) {
 		navigation.navigate('ForgotPasswordRequest');
 	};
 
+  // Test comment, can be removed immeidatel
+
   return (
     <View style={{ flex: 1, padding: 16 }}>
       <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Welcome</Text>
+      <TextInput placeholder="First Name" value={firstName} onChangeText={setFirstName} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
+      <TextInput placeholder="Last Name" value={lastName} onChangeText={setLastName} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
       <TextInput placeholder="Email" autoCapitalize="none" value={email} onChangeText={setEmail} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
 			<TextInput placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 16 }} />
       <View style={{ flexDirection: 'row', gap: 12 }}>

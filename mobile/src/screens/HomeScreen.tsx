@@ -90,7 +90,6 @@ export default function HomeScreen({ navigation }: any) {
               setLookupError(null);
               setLookupLog(null);
               const otherUserSub = otherUserSubInput.trim();
-              console.log('[Home] open by sub', otherUserSub);
               setLookupLog(JSON.stringify({ sub: otherUserSub }, null, 2));
               if (!otherUserSub) {
                 setLookupError('User not found');
@@ -98,7 +97,6 @@ export default function HomeScreen({ navigation }: any) {
               }
               navigation.navigate('Chat', { otherUserSub });
             } catch (e: any) {
-              console.log('[Home] lookup error', e);
               const msg = e?.errors?.[0]?.message || e?.message || 'Lookup failed';
               setLookupError(msg);
             }

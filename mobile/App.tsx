@@ -1,6 +1,6 @@
 ﻿import 'react-native-gesture-handler';
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect } from 'react';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AuthScreen from './src/screens/AuthScreen';
 import VerifyCodeScreen from './src/screens/VerifyCodeScreen';
@@ -11,12 +11,81 @@ import GroupCreateScreen from './src/screens/GroupCreateScreen';
 import ForgotPasswordRequestScreen from './src/screens/ForgotPasswordRequestScreen';
 import ForgotPasswordCodeScreen from './src/screens/ForgotPasswordCodeScreen';
 import ForgotPasswordNewPasswordScreen from './src/screens/ForgotPasswordNewPasswordScreen';
+import * as Notifications from 'expo-notifications';
+import { getFlags } from './src/utils/flags';
+import Constants from 'expo-constants';
+import { getCurrentUser } from 'aws-amplify/auth';
+import { updateMyPushToken } from './src/graphql/users';
 
 const Stack = createStackNavigator();
 
 export default function App() {
+  const navRef = useNavigationContainerRef();
+  useEffect(() => {
+    (async () => {
+      try {
+        if (getFlags().DEBUG_LOGS) console.log('[push] requesting permissions');
+        const { status } = await Notifications.requestPermissionsAsync();
+        if (getFlags().DEBUG_LOGS) console.log('[push] permission status', status);
+        // Always set handler for local notifications
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            // Prefer new fields over deprecated shouldShowAlert
+            shouldShowBanner: true,
+            shouldShowList: true,
+            shouldShowAlert: true,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          } as any),
+        });
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowBanner: true,
+            shouldShowList: true,
+            shouldShowAlert: true,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          } as any),
+        });
+
+        // Skip remote push registration in Expo Go or when projectId is missing
+        const appOwnership = (Constants as any)?.appOwnership;
+        const projectId = (Constants as any)?.expoConfig?.extra?.eas?.projectId || (Constants as any)?.easConfig?.projectId;
+        const canRegisterRemote = status === 'granted' && projectId && appOwnership !== 'expo';
+        if (!canRegisterRemote) {
+          console.log('[push] skipping remote push registration (Expo Go or missing projectId)');
+          return;
+        }
+
+        const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+        if (getFlags().DEBUG_LOGS) console.log('[push] expo token', token);
+        try {
+          const me = await getCurrentUser();
+          if (getFlags().DEBUG_LOGS) console.log('[push] updating token for user', me.userId);
+          await updateMyPushToken(me.userId, token);
+          if (getFlags().DEBUG_LOGS) console.log('[push] update token success');
+        } catch (e) {
+          if (getFlags().DEBUG_LOGS) console.log('[push] update token error', (e as any)?.message || String(e));
+        }
+      } catch (e) {
+        if (getFlags().DEBUG_LOGS) console.log('[push] error', (e as any)?.message || String(e));
+      }
+      const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+        try {
+          const data: any = response?.notification?.request?.content?.data || {};
+          const conversationId = data?.conversationId;
+          if (getFlags().DEBUG_LOGS) console.log('[push] tap received', { conversationId });
+          if (conversationId) navRef.navigate('Chat' as never, { conversationId } as never);
+        } catch (e) {
+          console.log('[push] tap handler error', (e as any)?.message || String(e));
+        }
+      });
+      return () => { try { sub.remove(); } catch {} };
+    })();
+  }, []);
+
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navRef}>
       <Stack.Navigator initialRouteName="Auth">
         <Stack.Screen name="Auth" component={AuthScreen} />
         <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} />

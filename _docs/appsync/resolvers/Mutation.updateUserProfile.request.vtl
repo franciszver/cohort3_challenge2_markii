@@ -1,35 +1,39 @@
 ﻿#set($now = $util.time.nowISO8601())
+#set($email = $util.defaultIfNull($ctx.identity.claims.get("email"), $ctx.identity.username))
+#set($expr = {
+  "expression": "SET #updatedAt = :updatedAt, #createdAt = if_not_exists(#createdAt, :createdAt), #email = :email",
+  "expressionNames": {
+    "#updatedAt": "updatedAt",
+    "#createdAt": "createdAt",
+    "#email": "email"
+  },
+  "expressionValues": {
+    ":updatedAt": {"S": "$now"},
+    ":createdAt": {"S": "$now"},
+    ":email": $util.dynamodb.toDynamoDB($email)
+  }
+})
+#if(!$util.isNull($ctx.args.input.firstName))
+  $util.qr($expr.expressionNames.put("#firstName","firstName"))
+  $util.qr($expr.expressionValues.put(":firstName", $util.dynamodb.toDynamoDB($ctx.args.input.firstName)))
+  $util.qr($expr.expression = $expr.expression + ", #firstName = :firstName")
+#end
+#if(!$util.isNull($ctx.args.input.lastName))
+  $util.qr($expr.expressionNames.put("#lastName","lastName"))
+  $util.qr($expr.expressionValues.put(":lastName", $util.dynamodb.toDynamoDB($ctx.args.input.lastName)))
+  $util.qr($expr.expression = $expr.expression + ", #lastName = :lastName")
+#end
+#if(!$util.isNull($ctx.args.input.avatarColor))
+  $util.qr($expr.expressionNames.put("#avatarColor","avatarColor"))
+  $util.qr($expr.expressionValues.put(":avatarColor", $util.dynamodb.toDynamoDB($ctx.args.input.avatarColor)))
+  $util.qr($expr.expression = $expr.expression + ", #avatarColor = :avatarColor")
+#end
 {
   "version": "2018-05-29",
   "operation": "UpdateItem",
   "key": {
     "userId": $util.dynamodb.toDynamoDBJson($ctx.identity.sub)
   },
-  "update": {
-    "expression": "SET #username = if_not_exists(#username, :username), #avatar = :avatar, #status = :status, #updatedAt = :updatedAt, #createdAt = if_not_exists(#createdAt, :createdAt)",
-    "expressionNames": {
-      "#username": "username",
-      "#avatar": "avatar",
-      "#status": "status",
-      "#createdAt": "createdAt",
-      "#updatedAt": "updatedAt"
-    },
-    "expressionValues": {
-      ":username": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.username, $ctx.identity.username)),
-      ":avatar": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.avatar, null)),
-      ":status": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.status, null)),
-      ":createdAt": {"S": "$now"},
-      ":updatedAt": {"S": "$now"}
-    }
-  },
-  "condition": {
-    "expression": "attribute_not_exists(#username) OR #username = :username",
-    "expressionNames": {
-      "#username": "username"
-    },
-    "expressionValues": {
-      ":username": $util.dynamodb.toDynamoDB($util.defaultIfNull($ctx.args.input.username, $ctx.identity.username))
-    }
-  },
+  "update": $expr,
   "returnValues": "ALL_NEW"
 }

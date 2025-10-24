@@ -20,6 +20,8 @@ export async function createConversation(name: string | undefined, isGroup: bool
   const meId = participantIds[0];
   const input: any = { name, isGroup, createdBy: meId };
   if (id) input.id = id;
+  // Ensure participants array is populated for discovery on receivers
+  input.participants = participantIds;
   const convRes: any = await getClient().graphql({ query: createConv, variables: { input }, authMode: 'userPool' });
   const conv = convRes?.data?.createConversation;
   if (!conv?.id) throw new Error('Conversation create failed');
@@ -35,6 +37,18 @@ export async function listConversationsForUser(userId: string, limit = 20, nextT
     query ListMyConversations($userId: String!, $limit: Int, $nextToken: String) {
       conversationParticipantsByUserIdAndConversationId(userId: $userId, limit: $limit, nextToken: $nextToken) {
         items { conversationId userId role joinedAt lastReadAt }
+        nextToken
+      }
+    }
+  `;
+  return getClient().graphql({ query, variables: { userId, limit, nextToken }, authMode: 'userPool' });
+}
+
+export async function listConversationsByParticipant(userId: string, limit = 50, nextToken?: string) {
+  const query = /* GraphQL */ `
+    query ListConversationsByParticipant($userId: String!, $limit: Int, $nextToken: String) {
+      listConversations(filter: { participants: { contains: $userId } }, limit: $limit, nextToken: $nextToken) {
+        items { id name isGroup createdBy createdAt participants }
         nextToken
       }
     }
@@ -59,6 +73,20 @@ export async function listParticipantsForConversation(conversationId: string, li
     }
   `;
   return getClient().graphql({ query, variables: { conversationId, limit, nextToken }, authMode: 'userPool' });
+}
+
+export async function ensureParticipant(conversationId: string, userId: string, role: 'ADMIN' | 'MEMBER' = 'MEMBER') {
+  const createParticipant = /* GraphQL */ `
+    mutation CreateConversationParticipant($input: CreateConversationParticipantInput!) {
+      createConversationParticipant(input: $input) { id conversationId userId role joinedAt }
+    }
+  `;
+  const input = { conversationId, userId, joinedAt: new Date().toISOString(), role } as any;
+  try {
+    return await getClient().graphql({ query: createParticipant, variables: { input }, authMode: 'userPool' });
+  } catch (e) {
+    return null;
+  }
 }
 
 export async function getMyParticipantRecord(conversationId: string, userId: string) {
@@ -104,6 +132,39 @@ export async function ensureDirectConversation(conversationId: string, meId: str
     const fallback: any = await getConversation(conversationId);
     return fallback?.data?.getConversation;
   }
+}
+
+export async function deleteConversationById(id: string, _version?: number) {
+  const mutation = /* GraphQL */ `
+    mutation DeleteConversation($input: DeleteConversationInput!) {
+      deleteConversation(input: $input) { id }
+    }
+  `;
+  const input: any = { id };
+  if (_version != null) input._version = _version;
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+}
+
+export function subscribeConversationDeleted(conversationId: string) {
+  const subscription = /* GraphQL */ `
+    subscription OnDeleteConversation($filter: ModelSubscriptionConversationFilterInput) {
+      onDeleteConversation(filter: $filter) { id }
+    }
+  `;
+  const variables = { filter: { id: { eq: conversationId } } } as const;
+  const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
+  return op.subscribe.bind(op);
+}
+
+export async function updateConversationLastMessage(conversationId: string, preview: string, whenISO?: string) {
+  const mutation = /* GraphQL */ `
+    mutation UpdateConversation($input: UpdateConversationInput!) {
+      updateConversation(input: $input) { id lastMessage lastMessageAt updatedAt }
+    }
+  `;
+  const input: any = { id: conversationId, lastMessage: preview };
+  if (whenISO) input.lastMessageAt = whenISO;
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
 }
 
 
