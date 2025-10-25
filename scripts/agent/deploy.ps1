@@ -2,7 +2,11 @@ Param(
   [Parameter(Mandatory=$true)][string]$Profile,
   [Parameter(Mandatory=$true)][string]$Region,
   [Parameter(Mandatory=$true)][string]$AppSyncApiId,
-  [Parameter(Mandatory=$true)][string]$AppSyncEndpoint
+  [Parameter(Mandatory=$true)][string]$AppSyncEndpoint,
+  [Parameter(Mandatory=$false)][string]$OpenAISecretArn,
+  [Parameter(Mandatory=$false)][switch]$EnableOpenAI,
+  [Parameter(Mandatory=$false)][switch]$EnableRecipes,
+  [Parameter(Mandatory=$false)][string]$OpenAIModel = 'gpt-4o-mini'
 )
 
 Set-StrictMode -Version Latest
@@ -27,24 +31,59 @@ New-Item -ItemType Directory -Force -Path dist | Out-Null
 Copy-Item -Force scripts/agent/assistant.js dist/assistant.js
 Compress-Archive -Force -Path dist/assistant.js -DestinationPath dist/assistant.zip
 
+# Compute env vars JSON file for Lambda (PowerShell-safe)
+$flagOpenAI = if ($EnableOpenAI) { 'true' } else { 'false' }
+$flagRecipes = if ($EnableRecipes) { 'true' } else { 'false' }
+$envVarsHash = @{
+  APPSYNC_ENDPOINT = $AppSyncEndpoint
+  ASSISTANT_BOT_USER_ID = 'assistant-bot'
+  ASSISTANT_REPLY_PREFIX = 'Assistant Echo:'
+  ASSISTANT_OPENAI_ENABLED = $flagOpenAI
+  ASSISTANT_RECIPE_ENABLED = $flagRecipes
+  OPENAI_MODEL = $OpenAIModel
+}
+if ($OpenAISecretArn) { $envVarsHash['OPENAI_SECRET_ARN'] = $OpenAISecretArn }
+$envObj = @{ Variables = $envVarsHash }
+$envFile = Join-Path $env:TEMP 'assistant-env.json'
+$envObj | ConvertTo-Json -Depth 5 | Set-Content -Path $envFile -Encoding ascii
+
 # IAM role
 $roleName = 'AssistantMvpLambdaRole'
-$trust = @'{
+$trust = @'
+{
   "Version":"2012-10-17",
   "Statement":[{ "Effect":"Allow", "Principal":{ "Service":"lambda.amazonaws.com" }, "Action":"sts:AssumeRole" }]
-}'@
-$policy = @"{
+}
+'@
+$policy = @"
+{
   "Version":"2012-10-17",
   "Statement":[{
     "Effect":"Allow",
     "Action":["appsync:GraphQL"],
-    "Resource":["arn:aws:appsync:$Region:$acct:apis/$AppSyncApiId/*"]
+    "Resource":["arn:aws:appsync:${Region}:${acct}:apis/${AppSyncApiId}/*"]
   }]
-}"@
+}
+"@
 
 try { aws iam create-role --role-name $roleName --assume-role-policy-document $trust | Out-Null } catch {}
 aws iam attach-role-policy --role-name $roleName --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole | Out-Null
-aws iam put-role-policy --role-name $roleName --policy-name AssistantMvpAppSyncPolicy --policy-document $policy | Out-Null
+$policyFile = Join-Path $env:TEMP 'assistant-appsync-policy.json'
+$policy | Set-Content -Path $policyFile -Encoding ascii
+aws iam put-role-policy --role-name $roleName --policy-name AssistantMvpAppSyncPolicy --policy-document file://$policyFile | Out-Null
+
+# Optional: grant Secrets Manager read for OpenAI key
+if ($OpenAISecretArn) {
+  $secp = @"
+{
+  "Version":"2012-10-17",
+  "Statement":[{ "Effect":"Allow", "Action":["secretsmanager:GetSecretValue"], "Resource":["$OpenAISecretArn"] }]
+}
+"@
+  $secpFile = Join-Path $env:TEMP 'assistant-secrets-policy.json'
+  $secp | Set-Content -Path $secpFile -Encoding ascii
+  aws iam put-role-policy --role-name $roleName --policy-name AssistantMvpSecretsRead --policy-document file://$secpFile | Out-Null
+}
 
 Start-Sleep -Seconds 8
 
@@ -58,10 +97,12 @@ try {
     --handler assistant.handler `
     --role $roleArn `
     --zip-file fileb://dist/assistant.zip `
-    --environment Variables=@{APPSYNC_ENDPOINT="$AppSyncEndpoint";AWS_REGION="$Region";ASSISTANT_BOT_USER_ID="assistant-bot";ASSISTANT_REPLY_PREFIX="Assistant Echo:"} | Out-Null
+    --timeout 10 `
+    --memory-size 256 `
+    --environment file://$envFile | Out-Null
 } catch {
   aws lambda update-function-code --function-name $fnName --zip-file fileb://dist/assistant.zip | Out-Null
-  aws lambda update-function-configuration --function-name $fnName --environment Variables=@{APPSYNC_ENDPOINT="$AppSyncEndpoint";AWS_REGION="$Region";ASSISTANT_BOT_USER_ID="assistant-bot";ASSISTANT_REPLY_PREFIX="Assistant Echo:"} | Out-Null
+  aws lambda update-function-configuration --function-name $fnName --timeout 10 --memory-size 256 --environment file://$envFile | Out-Null
 }
 
 # HTTP API

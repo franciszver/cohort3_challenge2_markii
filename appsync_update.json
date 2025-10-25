@@ -1,0 +1,11 @@
+﻿{
+    "xrayEnabled":  false,
+    "apiId":  "ke2mzdeb7bgolo7gf7bjyfxa5i",
+    "name":  "graphql-api-ke2mzdeb7bgolo7gf7bjyfxa5i",
+    "authenticationType":  null,
+    "additionalAuthenticationProviders":  [
+                                              {
+                                                  "authenticationType":  "AWS_IAM"
+                                              }
+                                          ]
+}

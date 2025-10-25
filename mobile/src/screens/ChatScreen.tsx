@@ -63,6 +63,15 @@ const [isSendingMsg, setIsSendingMsg] = useState(false);
 const [isSendingImg, setIsSendingImg] = useState(false);
 const [assistantPending, setAssistantPending] = useState(false);
 const assistantTimerRef = useRef<any>(null);
+// Calendar picker state
+const [calPickVisible, setCalPickVisible] = useState(false);
+const [calChoices, setCalChoices] = useState<any[]>([]);
+const [calBusy, setCalBusy] = useState(false);
+const calPendingEventsRef = useRef<any[] | null>(null);
+const calTargetIdRef = useRef<string | null>(null);
+// Recipes modal state
+const [recipesVisible, setRecipesVisible] = useState(false);
+const [recipesItems, setRecipesItems] = useState<any[]>([]);
 
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
@@ -455,7 +464,8 @@ const assistantTimerRef = useRef<any>(null);
                                 const session: any = await (await import('aws-amplify/auth')).fetchAuthSession();
                                 jwt = session?.tokens?.idToken?.toString?.() || session?.tokens?.idToken?.toString?.call(session.tokens.idToken);
                             } catch {}
-                            const body = { ...req, ...(jwt ? { jwt } : {}) } as any;
+                            const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
+                            const body = { ...req, ...(jwt ? { jwt } : {}), ...(tz ? { tz } : {}) } as any;
                             const res = await fetch(`${base}/agent/weekend-plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                             // soft log network status in UI footer if non-200
                             if (!res.ok) {
@@ -713,28 +723,40 @@ const assistantTimerRef = useRef<any>(null);
                                 } catch {}
                             }
 										if (!evs.length) return null;
-										return (
+                            return (
 											<View style={{ marginTop: 6 }}>
 												<TouchableOpacity
-													onPress={async () => {
-														try {
+                                        onPress={async () => {
+                                            try {
 															const perm = await Calendar.requestCalendarPermissionsAsync();
 															if (perm.status !== 'granted') { try { showToast('Calendar permission denied'); } catch {} return; }
-															const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-															const target = cals.find((c:any) => (c?.allowsModifications)) || cals[0];
-															if (!target?.id) { try { showToast('No writable calendar found'); } catch {} return; }
-															for (const e of evs.slice(0, 10)) {
-																try {
-																	await Calendar.createEventAsync(target.id, {
-																		title: e.title || 'Assistant Event',
-																		startDate: new Date(e.startISO || Date.now()),
-																		endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
-																		notes: e.notes || undefined,
-																	});
-																} catch {}
-															}
-															try { showToast('Added to calendar'); } catch {}
-														} catch {}
+                                                // Prefer saved target id
+                                                try { calTargetIdRef.current = (await AsyncStorage.getItem('calendar:target')) || null; } catch {}
+                                                if (!calTargetIdRef.current) {
+                                                    const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+                                                    const writable = (cals || []).filter((c:any)=> c?.allowsModifications);
+                                                    if (!writable.length) { try { showToast('No writable calendar found'); } catch {} return; }
+                                                    calPendingEventsRef.current = evs.slice(0, 10);
+                                                    setCalChoices(writable);
+                                                    setCalPickVisible(true);
+                                                    return;
+                                                }
+                                                // Use saved calendar id
+                                                const targetId = calTargetIdRef.current;
+                                                for (const e of evs.slice(0, 10)) {
+                                                    try {
+                                                        await Calendar.createEventAsync(targetId!, {
+                                                            title: e.title || 'Assistant Event',
+                                                            startDate: new Date(e.startISO || Date.now()),
+                                                            endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
+                                                            notes: e.notes || undefined,
+                                                        });
+                                                    } catch {}
+                                                }
+                                                try { showToast('Added to calendar'); } catch {}
+                                            } catch (e) {
+                                                try { showToast('Calendar not available in this build'); } catch {}
+                                            }
 													}}
 													style={{ marginTop: 4 }}
 												>
@@ -743,6 +765,31 @@ const assistantTimerRef = useRef<any>(null);
 											</View>
 										);
 									} catch { return null; } })()}
+								{(() => { try {
+									if (item.senderId !== 'assistant-bot') return null;
+									const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+									let recs = Array.isArray((meta as any)?.recipes) ? (meta as any).recipes : [];
+									if (!recs.length && Array.isArray((item as any).attachments)) {
+										try {
+											const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('recipes:'));
+											if (hit) {
+												const payload = hit.slice('recipes:'.length);
+												try { const obj = JSON.parse(payload); if (Array.isArray(obj?.recipes) && obj.recipes.length) recs = obj.recipes; } catch {}
+											}
+										} catch {}
+									}
+									if (!recs.length) return null;
+									return (
+										<View style={{ marginTop: 6 }}>
+											<TouchableOpacity
+												onPress={() => { try { setRecipesItems(recs.slice(0, 3)); setRecipesVisible(true); } catch {} }}
+												style={{ marginTop: 4 }}
+											>
+												<Text style={{ color: '#3b82f6', fontWeight: '600' }}>View recipes</Text>
+											</TouchableOpacity>
+										</View>
+									);
+								} catch { return null; } })()}
 								</TouchableOpacity>
 							)}
 						</View>
@@ -757,6 +804,60 @@ const assistantTimerRef = useRef<any>(null);
 					</View>
 				</View>
 			</Modal>
+			{/* Recipes modal */}
+			<Modal visible={recipesVisible} transparent animationType="fade" onRequestClose={() => setRecipesVisible(false)}>
+				<View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: 8 }}>Recipe suggestions</Text>
+						{recipesItems.map((r:any, i:number) => (
+							<View key={i} style={{ marginBottom: 8 }}>
+								<Text style={{ fontWeight: '600' }}>{r.title}</Text>
+								<Text style={{ color: '#6b7280' }} numberOfLines={3}>{Array.isArray(r.ingredients) ? r.ingredients.slice(0,5).join(', ') : ''}</Text>
+								<Text style={{ color: '#6b7280' }} numberOfLines={3}>{Array.isArray(r.steps) ? r.steps.slice(0,3).join('. ') : ''}</Text>
+							</View>
+						))}
+						<View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+							<Button title="Close" onPress={() => setRecipesVisible(false)} />
+						</View>
+					</View>
+				</View>
+			</Modal>
+            {/* Calendar picker modal */}
+            <Modal visible={calPickVisible} transparent animationType="fade" onRequestClose={() => setCalPickVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+                        <Text style={{ fontWeight: '600', marginBottom: 8 }}>Choose calendar</Text>
+                        {calChoices.map((c:any) => (
+                            <TouchableOpacity key={c.id} onPress={async () => {
+                                if (calBusy) return; setCalBusy(true);
+                                try {
+                                    await AsyncStorage.setItem('calendar:target', String(c.id));
+                                    const evs = calPendingEventsRef.current || [];
+                                    for (const e of evs) {
+                                        try {
+                                            await Calendar.createEventAsync(String(c.id), {
+                                                title: e.title || 'Assistant Event',
+                                                startDate: new Date(e.startISO || Date.now()),
+                                                endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
+                                                notes: e.notes || undefined,
+                                            });
+                                        } catch {}
+                                    }
+                                    try { showToast('Added to calendar'); } catch {}
+                                    setCalPickVisible(false);
+                                } catch (e) {
+                                    try { showToast('Calendar not available in this build'); } catch {}
+                                } finally { setCalBusy(false); calPendingEventsRef.current = null; }
+                            }} style={{ paddingVertical: 8 }}>
+                                <Text style={{ color: '#111827' }}>{c.title || c.name || c.id}</Text>
+                            </TouchableOpacity>
+                        ))}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+                            <Button title={calBusy ? 'Working…' : 'Cancel'} onPress={() => { if (!calBusy) setCalPickVisible(false); }} />
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 			{error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
 			<View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
 				<TextInput
