@@ -178,6 +178,51 @@ function dbg(...args) {
   } catch {}
 }
 
+// Heuristic decision extractor (lightweight, no extra API calls)
+function extractDecisionsFromRecent(recent, currentUserId) {
+  try {
+    const items = Array.isArray(recent) ? recent.slice() : [];
+    if (!items.length) return [];
+    const hits = [];
+    const patterns = [
+      /\bwe\s+decided\b/i,
+      /\bdecided\s+to\b/i,
+      /\blet'?s\s+go\s+with\b/i,
+      /\bwe(?:'|\s+|\s*have\s*)agreed\b/i,
+      /\bsettled\s+on\b/i,
+      /\bwe\s+(?:will|\'ll)\s+go\s+with\b/i,
+      /\bwe\s+choose\b/i,
+      /\bwe\s+chose\b/i,
+    ];
+    for (let i = 0; i < items.length; i++) {
+      const m = items[i];
+      const text = String(m?.content || '').trim();
+      if (!text) continue;
+      if (!patterns.some((re) => re.test(text))) continue;
+      const decidedAtISO = (() => { try { return new Date(m.createdAt).toISOString(); } catch { return new Date().toISOString(); } })();
+      let title = text.slice(0, 60);
+      try {
+        const t2 = text.replace(/^[^:]+:\s*/, '');
+        if (t2) title = t2.slice(0, 60);
+      } catch {}
+      const summary = text.slice(0, 200);
+      const participantsSet = new Set();
+      const start = Math.max(0, i - 5);
+      const end = Math.min(items.length - 1, i + 5);
+      for (let j = start; j <= end; j++) {
+        const sid = items[j]?.senderId;
+        if (sid && sid !== 'assistant-bot') participantsSet.add(sid);
+      }
+      const participants = Array.from(participantsSet);
+      if (participants.length) {
+        hits.push({ title, summary, participants, decidedAtISO });
+      }
+      if (hits.length >= 3) break;
+    }
+    return hits;
+  } catch { return []; }
+}
+
 function logMetric(name, value = 1, dims) {
   try {
     const base = { metric: name, value };
@@ -193,6 +238,108 @@ function toIsoOrNull(s) {
     if (!Number.isFinite(t)) return null;
     return d.toISOString();
   } catch { return null; }
+}
+
+// Simple deterministic event parsing as a safety net when the model returns no events
+function parseDayOffsetFromWord(word, now) {
+  try {
+    const t = String(word || '').trim().toLowerCase();
+    const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    if (t === 'today') return 0;
+    if (t === 'tomorrow') return 1;
+    const short = ['sun','mon','tue','wed','thu','fri','sat'];
+    const idxLong = days.indexOf(t);
+    const idxShort = short.indexOf(t.slice(0,3));
+    const targetIdx = idxLong >= 0 ? idxLong : idxShort;
+    if (targetIdx < 0) return null;
+    const currentIdx = now.getDay();
+    let delta = targetIdx - currentIdx;
+    if (delta <= 0) delta += 7;
+    return delta;
+  } catch { return null; }
+}
+
+function parseTimeToken(s) {
+  const str = String(s || '').trim().toLowerCase();
+  const m12 = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(str);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const min = m12[2] ? parseInt(m12[2], 10) : 0;
+    const ap = m12[3].toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12;
+    if (ap === 'am' && h === 12) h = 0;
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { hour: h, minute: min };
+  }
+  const m24 = /^(\d{1,2}):(\d{2})$/.exec(str);
+  if (m24) {
+    const h = parseInt(m24[1], 10);
+    const min = parseInt(m24[2], 10);
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { hour: h, minute: min };
+  }
+  const mHourAm = /^(\d{1,2})\s*(am|pm)$/.exec(str);
+  if (mHourAm) {
+    let h = parseInt(mHourAm[1], 10);
+    const ap = mHourAm[2].toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12;
+    if (ap === 'am' && h === 12) h = 0;
+    return { hour: h, minute: 0 };
+  }
+  return null;
+}
+
+function buildDateOn(baseDate, hour, minute) {
+  return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), hour, minute, 0, 0);
+}
+
+function parseEventsFromText(text, now = new Date()) {
+  try {
+    const t = String(text || '').trim();
+    if (!t) return [];
+    let dayOffset = 0;
+    const dm = /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|today|tomorrow)/i.exec(t);
+    if (dm) {
+      const off = parseDayOffsetFromWord(dm[1], now);
+      if (off != null) dayOffset = off;
+    }
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, 0, 0, 0, 0);
+    const parts = t.split(/;+/).map(s => s.trim()).filter(Boolean);
+    const out = [];
+    for (const partRaw of (parts.length ? parts : [t])) {
+      const part = partRaw.trim();
+      const lower = part.toLowerCase();
+      let start = null; let end = null; let title = null;
+      // Range like 6-7am or 6:00-7:00 (optional am/pm suffix applied to both)
+      const mRange = /(\d{1,2}(?::\d{2})?)\s*(?:-|–|to)\s*(\d{1,2}(?::\d{2})?)\s*(am|pm)?/i.exec(lower);
+      if (mRange) {
+        const ap = mRange[3] ? mRange[3] : '';
+        const aTok = parseTimeToken(mRange[1] + ap) || parseTimeToken(mRange[1]);
+        const bTok = parseTimeToken(mRange[2] + ap) || parseTimeToken(mRange[2]);
+        if (aTok && bTok) {
+          start = buildDateOn(base, aTok.hour, aTok.minute);
+          end = buildDateOn(base, bTok.hour, bTok.minute);
+        }
+        const after = part.slice(mRange.index + mRange[0].length).trim().replace(/^[:\-–]\s*/, '');
+        title = after || 'Planned item';
+      }
+      if (!start) {
+        const mSingle = /(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i.exec(lower);
+        if (mSingle) {
+          const tok = parseTimeToken(mSingle[1]);
+          if (tok) {
+            start = buildDateOn(base, tok.hour, tok.minute);
+            end = new Date(start.getTime() + 60*60*1000);
+            const after = part.slice(mSingle.index + mSingle[0].length).trim().replace(/^[:\-–]\s*/, '');
+            title = after || 'Planned item';
+          }
+        }
+      }
+      if (start && end) {
+        out.push({ title: String(title || 'Planned item').slice(0,80), startISO: start.toISOString(), endISO: end.toISOString() });
+      }
+      if (out.length >= 10) break;
+    }
+    return out;
+  } catch { return []; }
 }
 
 function validateModelResponse(raw) {
@@ -290,8 +437,14 @@ async function getOpenAIKey() {
   if (inline) { dbg('OPENAI_API_KEY present (len):', inline.length); return inline; }
   const arn = String(process.env.OPENAI_SECRET_ARN || '').trim();
   if (!arn) return '';
+  // Try to detect region from ARN if provided
+  let regionFromArn = undefined;
   try {
-    const res = await sigv4PostJson({ service: 'secretsmanager', region: AWS_REGION, target: 'secretsmanager.GetSecretValue', bodyObj: { SecretId: arn } });
+    const m = /^arn:aws:secretsmanager:([a-z0-9-]+):\d{12}:secret:\S+$/i.exec(arn);
+    if (m && m[1]) regionFromArn = m[1];
+  } catch {}
+  try {
+    const res = await sigv4PostJson({ service: 'secretsmanager', region: regionFromArn || AWS_REGION, target: 'secretsmanager.GetSecretValue', bodyObj: { SecretId: arn }, hostOverride: regionFromArn ? `secretsmanager.${regionFromArn}.amazonaws.com` : undefined });
     const str = res?.SecretString || '';
     if (!str) return '';
     try {
@@ -479,12 +632,27 @@ exports.handler = async (event) => {
     // Feature flags
     const ASSISTANT_OPENAI_ENABLED = getEnvBool('ASSISTANT_OPENAI_ENABLED', false);
     const ASSISTANT_RECIPE_ENABLED = getEnvBool('ASSISTANT_RECIPE_ENABLED', false);
+    const ASSISTANT_DECISIONS_ENABLED = getEnvBool('ASSISTANT_DECISIONS_ENABLED', false);
     const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini');
 
     // Single tool: get recent messages
     let recent = [];
     try { recent = await getRecentMessages(conversationId, 10, jwt); } catch (e) { console.warn('[assistant] getRecentMessages failed:', e?.message || e); }
     const lastUserMessage = (recent || []).find((m) => m?.senderId === userId)?.content || text || '';
+
+    // Precompute decisions once (flag-gated)
+    let decisionsMetaGlobal = undefined; let decisionsAttachGlobal = undefined;
+    if (ASSISTANT_DECISIONS_ENABLED) {
+      try {
+        const decisions = extractDecisionsFromRecent(recent, userId);
+        const count = Array.isArray(decisions) ? decisions.length : 0;
+        try { logMetric('decisions_extracted', count); } catch {}
+        if (count) {
+          decisionsMetaGlobal = { decisions };
+          try { decisionsAttachGlobal = 'decisions:' + JSON.stringify({ decisions }); } catch {}
+        }
+      } catch {}
+    }
 
     // Lightweight command handling (preferences & lists)
     const lower = String(text || '').toLowerCase();
@@ -729,8 +897,14 @@ exports.handler = async (event) => {
         if (Array.isArray(recs) && recs.length) {
           const summary = recs.map(r => `• ${r.title}`).join('\n');
           const content = `${ASSISTANT_REPLY_PREFIX} Here are a few quick dinner ideas:\n${summary}`;
-          const attach = (() => { try { return 'recipes:' + JSON.stringify({ recipes: recs }); } catch { return undefined; } })();
-          await createAssistantMessage(conversationId, content, jwt, { recipes: recs }, attach ? [attach] : undefined, 'TEXT');
+          const attachRecipes = (() => { try { return 'recipes:' + JSON.stringify({ recipes: recs }); } catch { return undefined; } })();
+          const decisionsMeta = decisionsMetaGlobal;
+          const decisionsAttach = decisionsAttachGlobal;
+          const attachments = [];
+          if (attachRecipes) attachments.push(attachRecipes);
+          if (decisionsAttach) attachments.push(decisionsAttach);
+          const metadata = decisionsMeta ? { recipes: recs, ...decisionsMeta } : { recipes: recs };
+          await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
           return respond(isHttp, 200, { ok: true });
         }
       } catch {}
@@ -762,11 +936,40 @@ exports.handler = async (event) => {
             const validated = validateModelResponse(parsed);
             if (validated && typeof validated.text === 'string') {
               const modelText = validated.text;
-              const events = Array.isArray(validated.events) ? validated.events : [];
+              let events = Array.isArray(validated.events) ? validated.events : [];
+              if (!events.length) {
+                try {
+                  const derived = parseEventsFromText(lastUserMessage || text || '', new Date());
+                  if (Array.isArray(derived) && derived.length) {
+                    events = derived;
+                    try { logMetric('events_derived', derived.length); } catch {}
+                  }
+                } catch {}
+              }
               const content = `${ASSISTANT_REPLY_PREFIX} ${modelText}`.trim();
+              // Optional: decision extraction on assistant replies
+              let decisionsMeta = undefined;
+              let decisionsAttach = undefined;
+              if (ASSISTANT_DECISIONS_ENABLED) {
+                try {
+                  const decisions = extractDecisionsFromRecent(recent, userId);
+                  if (Array.isArray(decisions) && decisions.length) {
+                    decisionsMeta = { decisions };
+                    try { decisionsAttach = 'decisions:' + JSON.stringify({ decisions }); } catch {}
+                  }
+                } catch {}
+              }
               try {
-                const enc = (() => { try { return events.length ? 'events:' + JSON.stringify({ events }) : undefined; } catch { return undefined; } })();
-                const posted = await createAssistantMessage(conversationId, content, jwt, events.length ? { events } : undefined, enc ? [enc] : undefined, 'TEXT');
+                const encEvents = (() => { try { return events.length ? 'events:' + JSON.stringify({ events }) : undefined; } catch { return undefined; } })();
+                const attachments = [];
+                if (encEvents) attachments.push(encEvents);
+                if (decisionsAttach) attachments.push(decisionsAttach);
+                const metadata = (() => {
+                  const base = events.length ? { events } : {};
+                  if (decisionsMeta) return { ...base, ...decisionsMeta };
+                  return Object.keys(base).length ? base : undefined;
+                })();
+                const posted = await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
                 console.log('[assistant] reply (openai) posted id:', posted?.id || '(none)');
                 logMetric('openai_success', 1);
                 if (posted && (!posted.messageType || !posted.updatedAt)) { await ensureMessageFields(posted.id, jwt).catch(() => {}); }
@@ -804,9 +1007,15 @@ exports.handler = async (event) => {
     ];
 
     try {
-      // Embed events as plain JSON sentinel in attachments for client fallback parsing
-      const enc = (() => { try { return 'events:' + JSON.stringify({ events }); } catch { return undefined; } })();
-      const posted = await createAssistantMessage(conversationId, content, jwt, { events }, enc ? [enc] : undefined, 'TEXT');
+      // Build attachments/metadata for events and optional decisions
+      const encEvents = (() => { try { return 'events:' + JSON.stringify({ events }); } catch { return undefined; } })();
+      const decisionsMeta = decisionsMetaGlobal;
+      const decisionsAttach = decisionsAttachGlobal;
+      const attachments = [];
+      if (encEvents) attachments.push(encEvents);
+      if (decisionsAttach) attachments.push(decisionsAttach);
+      const metadata = decisionsMeta ? { events, ...decisionsMeta } : { events };
+      const posted = await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
       console.log('[assistant] reply posted id:', posted?.id || '(none)');
       // If backend ignored fields, patch them immediately
       if (posted && (!posted.messageType || !posted.updatedAt)) {
@@ -820,7 +1029,7 @@ exports.handler = async (event) => {
               updateMessage(input: $input) { id }
             }
           `;
-          const input = { id: posted.id, metadata: JSON.stringify({ events }) };
+          const input = { id: posted.id, metadata: JSON.stringify(metadata) };
           await signAndRequest({ query: u, variables: { input }, opName: 'updateMessage(metadata)', jwt });
         }
       } catch {}

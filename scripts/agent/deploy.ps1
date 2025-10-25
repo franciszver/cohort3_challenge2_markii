@@ -4,8 +4,10 @@ Param(
   [Parameter(Mandatory=$true)][string]$AppSyncApiId,
   [Parameter(Mandatory=$true)][string]$AppSyncEndpoint,
   [Parameter(Mandatory=$false)][string]$OpenAISecretArn,
+  [Parameter(Mandatory=$false)][string]$OpenAIApiKey,
   [Parameter(Mandatory=$false)][switch]$EnableOpenAI,
   [Parameter(Mandatory=$false)][switch]$EnableRecipes,
+  [Parameter(Mandatory=$false)][switch]$EnableDecisions,
   [Parameter(Mandatory=$false)][string]$OpenAIModel = 'gpt-4o-mini'
 )
 
@@ -34,15 +36,18 @@ Compress-Archive -Force -Path dist/assistant.js -DestinationPath dist/assistant.
 # Compute env vars JSON file for Lambda (PowerShell-safe)
 $flagOpenAI = if ($EnableOpenAI) { 'true' } else { 'false' }
 $flagRecipes = if ($EnableRecipes) { 'true' } else { 'false' }
+$flagDecisions = if ($EnableDecisions) { 'true' } else { 'false' }
 $envVarsHash = @{
   APPSYNC_ENDPOINT = $AppSyncEndpoint
   ASSISTANT_BOT_USER_ID = 'assistant-bot'
   ASSISTANT_REPLY_PREFIX = 'Assistant Echo:'
   ASSISTANT_OPENAI_ENABLED = $flagOpenAI
   ASSISTANT_RECIPE_ENABLED = $flagRecipes
+  ASSISTANT_DECISIONS_ENABLED = $flagDecisions
   OPENAI_MODEL = $OpenAIModel
 }
 if ($OpenAISecretArn) { $envVarsHash['OPENAI_SECRET_ARN'] = $OpenAISecretArn }
+if ($OpenAIApiKey) { $envVarsHash['OPENAI_API_KEY'] = $OpenAIApiKey }
 $envObj = @{ Variables = $envVarsHash }
 $envFile = Join-Path $env:TEMP 'assistant-env.json'
 $envObj | ConvertTo-Json -Depth 5 | Set-Content -Path $envFile -Encoding ascii

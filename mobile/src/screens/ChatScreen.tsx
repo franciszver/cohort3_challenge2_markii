@@ -72,6 +72,9 @@ const calTargetIdRef = useRef<string | null>(null);
 // Recipes modal state
 const [recipesVisible, setRecipesVisible] = useState(false);
 const [recipesItems, setRecipesItems] = useState<any[]>([]);
+// Decisions modal state
+const [decisionsVisible, setDecisionsVisible] = useState(false);
+const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
@@ -790,6 +793,33 @@ const [recipesItems, setRecipesItems] = useState<any[]>([]);
 										</View>
 									);
 								} catch { return null; } })()}
+                                {(() => { try {
+                                    const { ASSISTANT_DECISIONS_ENABLED } = getFlags();
+                                    if (!ASSISTANT_DECISIONS_ENABLED) return null;
+                                    if (item.senderId !== 'assistant-bot') return null;
+                                    const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+                                    let decs = Array.isArray((meta as any)?.decisions) ? (meta as any).decisions : [];
+                                    if (!decs.length && Array.isArray((item as any).attachments)) {
+                                        try {
+                                            const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('decisions:'));
+                                            if (hit) {
+                                                const payload = hit.slice('decisions:'.length);
+                                                try { const obj = JSON.parse(payload); if (Array.isArray(obj?.decisions) && obj.decisions.length) decs = obj.decisions; } catch {}
+                                            }
+                                        } catch {}
+                                    }
+                                    if (!decs.length) return null;
+                                    return (
+                                        <View style={{ marginTop: 6 }}>
+                                            <TouchableOpacity
+                                                onPress={() => { try { setDecisionsItems(decs.slice(0, 5)); setDecisionsVisible(true); } catch {} }}
+                                                style={{ marginTop: 4 }}
+                                            >
+                                                <Text style={{ color: '#3b82f6', fontWeight: '600' }}>View decisions</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    );
+                                } catch { return null; } })()}
 								</TouchableOpacity>
 							)}
 						</View>
@@ -854,6 +884,32 @@ const [recipesItems, setRecipesItems] = useState<any[]>([]);
                         ))}
                         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
                             <Button title={calBusy ? 'Working…' : 'Cancel'} onPress={() => { if (!calBusy) setCalPickVisible(false); }} />
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            {/* Decisions modal */}
+            <Modal visible={decisionsVisible} transparent animationType="fade" onRequestClose={() => setDecisionsVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+                        <Text style={{ fontWeight: '600', marginBottom: 8 }}>Recent decisions</Text>
+                        {decisionsItems.map((d:any, i:number) => (
+                            <View key={i} style={{ marginBottom: 8 }}>
+                                <Text style={{ fontWeight: '600' }}>{d.title || 'Decision'}</Text>
+                                <Text style={{ color: '#6b7280' }} numberOfLines={3}>{d.summary || ''}</Text>
+                                {(() => { try {
+                                  const parts = Array.isArray(d.participants) ? d.participants : [];
+                                  const me = myId;
+                                  const display = parts.map((p:any) => p === me ? 'You' : p);
+                                  const first = display.slice(0, 3);
+                                  const more = Math.max(0, display.length - first.length);
+                                  return <Text style={{ color: '#6b7280', fontSize: 12 }}>Participants: {first.join(', ')}{more ? ` +${more} more` : ''}</Text>;
+                                } catch { return null; } })()}
+                                <Text style={{ color: '#6b7280', fontSize: 12 }}>When: {d.decidedAtISO ? new Date(d.decidedAtISO).toLocaleString() : ''}</Text>
+                            </View>
+                        ))}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                            <Button title="Close" onPress={() => setDecisionsVisible(false)} />
                         </View>
                     </View>
                 </View>
