@@ -17,6 +17,7 @@ const config: ExpoConfig = {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#ffffff',
     },
+    permissions: ['READ_CALENDAR', 'WRITE_CALENDAR'],
   },
   web: {
     favicon: './assets/favicon.png',
@@ -38,6 +39,10 @@ const config: ExpoConfig = {
     ENABLE_THEME: process.env.ENABLE_THEME ?? 'true',
     PRESENCE_HEARTBEAT_MS: process.env.PRESENCE_HEARTBEAT_MS ?? '30000',
     NOTIFY_RATE_LIMIT_PER_MINUTE: process.env.NOTIFY_RATE_LIMIT_PER_MINUTE ?? '10',
+    // Assistant MVP flags
+    ASSISTANT_ENABLED: process.env.ASSISTANT_ENABLED ?? 'false',
+    ASSISTANT_ENDPOINT: process.env.ASSISTANT_ENDPOINT ?? '',
+    ASSISTANT_CALENDAR_ENABLED: process.env.ASSISTANT_CALENDAR_ENABLED ?? 'false',
   },
 };
 

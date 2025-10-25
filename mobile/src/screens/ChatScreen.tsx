@@ -1,7 +1,8 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert } from 'react-native';
+import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
-import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser } from '../graphql/messages';
+import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser, getMessageById } from '../graphql/messages';
 import { getCurrentUser } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
@@ -15,6 +16,7 @@ import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
 import { generateLocalId } from '../utils/ids';
 import { getFlags } from '../utils/flags';
+import Constants from 'expo-constants';
 import { getUserProfile } from '../graphql/profile';
 import { getUserById } from '../graphql/users';
 import Avatar from '../components/Avatar';
@@ -59,6 +61,17 @@ const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(u
 const [otherLastSeen, setOtherLastSeen] = useState<string | undefined>(undefined);
 const [isSendingMsg, setIsSendingMsg] = useState(false);
 const [isSendingImg, setIsSendingImg] = useState(false);
+const [assistantPending, setAssistantPending] = useState(false);
+const assistantTimerRef = useRef<any>(null);
+// Calendar picker state
+const [calPickVisible, setCalPickVisible] = useState(false);
+const [calChoices, setCalChoices] = useState<any[]>([]);
+const [calBusy, setCalBusy] = useState(false);
+const calPendingEventsRef = useRef<any[] | null>(null);
+const calTargetIdRef = useRef<string | null>(null);
+// Recipes modal state
+const [recipesVisible, setRecipesVisible] = useState(false);
+const [recipesItems, setRecipesItems] = useState<any[]>([]);
 
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
@@ -113,10 +126,12 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 				// Set lastReadAt immediately on entering chat
 				try { await setMyLastRead(cid, me.userId, new Date().toISOString()); } catch {}
 				// subscribe to new messages in this conversation (first, to avoid missing messages)
-				const subscribe = subscribeMessagesCompat(cid);
+                const subscribe = subscribeMessagesCompat(cid);
 				const sub = subscribe({
 					next: async (evt: any) => {
-						const m = evt.data.onMessageInConversation;
+						try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[sub] evt', evt); } catch {}
+						const m = evt?.data?.onMessageInConversation;
+						if (!m || !m.id) { try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[sub] skip invalid message', m); } catch {} ; return; }
 						// Opportunistic presence update on inbound activity
 						try { const meNow = await getCurrentUser(); await updateLastSeen(meNow.userId); } catch {}
 						setMessages(prev => {
@@ -124,6 +139,50 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 							AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
 							return next;
 						});
+                        // Calendar CTA (flag-gated) — if metadata missing in sub payload, refetch message once to get metadata
+						try {
+							const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
+							if (ASSISTANT_CALENDAR_ENABLED && m?.senderId === 'assistant-bot') {
+								// Best-effort parse of metadata
+                                let meta = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
+                                if (!meta?.events) {
+                                    // Retry a few times to let backend update metadata
+                                    for (let i = 0; i < 5 && !(meta?.events && meta.events.length); i++) {
+                                        try {
+                                            const full = await getMessageById(m.id);
+                                            meta = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
+                                            try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[meta] attempt', i+1, 'events=', Array.isArray(meta?.events) ? meta.events.length : 0); } catch {}
+                                        } catch {}
+                                        if (!(meta?.events && meta.events.length)) {
+                                            const delay = 250 + i*300; // ~250,550,850,1150,1450ms
+                                            await new Promise(r => setTimeout(r, delay));
+                                        }
+                                    }
+                                }
+                                // Final fallback: check attachments for embedded events payload (events:<json> or events:<base64>)
+                                if (!(meta?.events && meta.events.length) && Array.isArray((m as any).attachments)) {
+                                    try {
+                                        const hit = (m as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('events:'));
+                                        if (hit) {
+                                            const payload = hit.slice('events:'.length);
+                                            let obj: any = null;
+                                            try { obj = JSON.parse(payload); } catch {
+                                                try { obj = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch {}
+                                            }
+                                            if (obj && Array.isArray(obj.events) && obj.events.length) {
+                                                meta = { ...(meta || {}), events: obj.events };
+                                                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[meta] attachment events found =', obj.events.length); } catch {}
+                                            }
+                                        }
+                                    } catch {}
+                                }
+								if (meta?.events && Array.isArray(meta.events) && meta.events.length) {
+									// Store marker in AsyncStorage so we can render a CTA row below this message (simple approach without schema change)
+									try { await AsyncStorage.setItem(`cal:${m.id}`, JSON.stringify({ events: meta.events })); } catch {}
+								}
+							}
+						} catch {}
+                        try { if (m?.senderId === 'assistant-bot') setAssistantPending(false); } catch {}
 						try { await markDelivered(m.id, me.userId); } catch {}
 						if (m.senderId !== me.userId) {
 							try { await markRead(m.id, me.userId); } catch {}
@@ -385,7 +444,46 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 			}
 			const snapshot = (prev => [optimistic, ...prev])(messages);
 			AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
-			try { const { ENABLE_CHAT_UX } = getFlags(); if (ENABLE_CHAT_UX) await AsyncStorage.removeItem(`draft:${cid}`); } catch {}
+            try { const { ENABLE_CHAT_UX } = getFlags(); if (ENABLE_CHAT_UX) await AsyncStorage.removeItem(`draft:${cid}`); } catch {}
+			// Assistant hook: if this is an assistant conversation, ping the agent endpoint (non-blocking)
+			try {
+				const { ASSISTANT_ENABLED } = getFlags();
+				if (ASSISTANT_ENABLED && (providedConversationId || '').startsWith('assistant::')) {
+					const extra: any = Constants.expoConfig?.extra || (Constants as any).manifest?.extra || {};
+					const base = (extra.ASSISTANT_ENDPOINT || '').replace(/\/$/, '');
+					if (base) {
+						const req = { requestId: localId, conversationId: cid, userId: me.userId, text: optimistic.content };
+                        try {
+                            const { DEBUG_LOGS } = getFlags();
+                            if (DEBUG_LOGS) {
+                                try { console.log('[assistant] POST', `${base}/agent/weekend-plan`, req); } catch {}
+                            }
+                            // Attach Cognito ID token so Lambda can call AppSync with the same JWT
+                            let jwt: string | undefined = undefined;
+                            try {
+                                const session: any = await (await import('aws-amplify/auth')).fetchAuthSession();
+                                jwt = session?.tokens?.idToken?.toString?.() || session?.tokens?.idToken?.toString?.call(session.tokens.idToken);
+                            } catch {}
+                            const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
+                            const body = { ...req, ...(jwt ? { jwt } : {}), ...(tz ? { tz } : {}) } as any;
+                            const res = await fetch(`${base}/agent/weekend-plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                            // soft log network status in UI footer if non-200
+                            if (!res.ok) {
+                                try { setError(`assistant endpoint ${res.status}`); } catch {}
+                                if (DEBUG_LOGS) {
+                                    try { console.log('[assistant] POST status', res.status, await res.text().catch(()=>'')); } catch {}
+                                }
+                            }
+                        } catch (e:any) {
+                            try { setError('assistant endpoint unreachable'); } catch {}
+                            try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[assistant] POST error', e?.message || e); } catch {}
+                        }
+                        setAssistantPending(true);
+                        try { if (assistantTimerRef.current) clearTimeout(assistantTimerRef.current); } catch {}
+                        assistantTimerRef.current = setTimeout(() => { try { setAssistantPending(false); } catch {} }, 8000);
+					}
+				}
+			} catch {}
 		} catch (e: any) {
 			setError(e?.message ?? 'Send failed');
 		}
@@ -512,7 +610,10 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 					<Text style={{ color: '#ef4444', fontWeight: '600' }}>Delete</Text>
 				</TouchableOpacity>
 			</View>
-			{isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
+            {isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
+            {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
+                <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>Assistant is thinking…</Text>
+            ) : null}
 			<FlatList
 				inverted
 				ref={listRef}
@@ -606,6 +707,89 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 									<Text style={{ color: '#6b7280', fontSize: 12 }}>
 										{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
 									</Text>
+									{(() => { try {
+										const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
+										if (!ASSISTANT_CALENDAR_ENABLED) return null;
+										if (item.senderId !== 'assistant-bot') return null;
+                            const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+                            let evs = Array.isArray(meta?.events) ? meta.events : [];
+                            if (!evs.length && Array.isArray((item as any).attachments)) {
+                                try {
+                                    const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('events:'));
+                                    if (hit) {
+                                        const payload = hit.slice('events:'.length);
+                                        try { const obj = JSON.parse(payload); if (Array.isArray(obj?.events) && obj.events.length) evs = obj.events; } catch {}
+                                    }
+                                } catch {}
+                            }
+										if (!evs.length) return null;
+                            return (
+											<View style={{ marginTop: 6 }}>
+												<TouchableOpacity
+                                        onPress={async () => {
+                                            try {
+															const perm = await Calendar.requestCalendarPermissionsAsync();
+															if (perm.status !== 'granted') { try { showToast('Calendar permission denied'); } catch {} return; }
+                                                // Prefer saved target id
+                                                try { calTargetIdRef.current = (await AsyncStorage.getItem('calendar:target')) || null; } catch {}
+                                                if (!calTargetIdRef.current) {
+                                                    const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+                                                    const writable = (cals || []).filter((c:any)=> c?.allowsModifications);
+                                                    if (!writable.length) { try { showToast('No writable calendar found'); } catch {} return; }
+                                                    calPendingEventsRef.current = evs.slice(0, 10);
+                                                    setCalChoices(writable);
+                                                    setCalPickVisible(true);
+                                                    return;
+                                                }
+                                                // Use saved calendar id
+                                                const targetId = calTargetIdRef.current;
+                                                for (const e of evs.slice(0, 10)) {
+                                                    try {
+                                                        await Calendar.createEventAsync(targetId!, {
+                                                            title: e.title || 'Assistant Event',
+                                                            startDate: new Date(e.startISO || Date.now()),
+                                                            endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
+                                                            notes: e.notes || undefined,
+                                                        });
+                                                    } catch {}
+                                                }
+                                                try { showToast('Added to calendar'); } catch {}
+                                            } catch (e) {
+                                                try { showToast('Calendar not available in this build'); } catch {}
+                                            }
+													}}
+													style={{ marginTop: 4 }}
+												>
+													<Text style={{ color: '#3b82f6', fontWeight: '600' }}>Add to calendar</Text>
+												</TouchableOpacity>
+											</View>
+										);
+									} catch { return null; } })()}
+								{(() => { try {
+									if (item.senderId !== 'assistant-bot') return null;
+									const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+									let recs = Array.isArray((meta as any)?.recipes) ? (meta as any).recipes : [];
+									if (!recs.length && Array.isArray((item as any).attachments)) {
+										try {
+											const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('recipes:'));
+											if (hit) {
+												const payload = hit.slice('recipes:'.length);
+												try { const obj = JSON.parse(payload); if (Array.isArray(obj?.recipes) && obj.recipes.length) recs = obj.recipes; } catch {}
+											}
+										} catch {}
+									}
+									if (!recs.length) return null;
+									return (
+										<View style={{ marginTop: 6 }}>
+											<TouchableOpacity
+												onPress={() => { try { setRecipesItems(recs.slice(0, 3)); setRecipesVisible(true); } catch {} }}
+												style={{ marginTop: 4 }}
+											>
+												<Text style={{ color: '#3b82f6', fontWeight: '600' }}>View recipes</Text>
+											</TouchableOpacity>
+										</View>
+									);
+								} catch { return null; } })()}
 								</TouchableOpacity>
 							)}
 						</View>
@@ -620,6 +804,60 @@ const [isSendingImg, setIsSendingImg] = useState(false);
 					</View>
 				</View>
 			</Modal>
+			{/* Recipes modal */}
+			<Modal visible={recipesVisible} transparent animationType="fade" onRequestClose={() => setRecipesVisible(false)}>
+				<View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: 8 }}>Recipe suggestions</Text>
+						{recipesItems.map((r:any, i:number) => (
+							<View key={i} style={{ marginBottom: 8 }}>
+								<Text style={{ fontWeight: '600' }}>{r.title}</Text>
+								<Text style={{ color: '#6b7280' }} numberOfLines={3}>{Array.isArray(r.ingredients) ? r.ingredients.slice(0,5).join(', ') : ''}</Text>
+								<Text style={{ color: '#6b7280' }} numberOfLines={3}>{Array.isArray(r.steps) ? r.steps.slice(0,3).join('. ') : ''}</Text>
+							</View>
+						))}
+						<View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+							<Button title="Close" onPress={() => setRecipesVisible(false)} />
+						</View>
+					</View>
+				</View>
+			</Modal>
+            {/* Calendar picker modal */}
+            <Modal visible={calPickVisible} transparent animationType="fade" onRequestClose={() => setCalPickVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
+                        <Text style={{ fontWeight: '600', marginBottom: 8 }}>Choose calendar</Text>
+                        {calChoices.map((c:any) => (
+                            <TouchableOpacity key={c.id} onPress={async () => {
+                                if (calBusy) return; setCalBusy(true);
+                                try {
+                                    await AsyncStorage.setItem('calendar:target', String(c.id));
+                                    const evs = calPendingEventsRef.current || [];
+                                    for (const e of evs) {
+                                        try {
+                                            await Calendar.createEventAsync(String(c.id), {
+                                                title: e.title || 'Assistant Event',
+                                                startDate: new Date(e.startISO || Date.now()),
+                                                endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
+                                                notes: e.notes || undefined,
+                                            });
+                                        } catch {}
+                                    }
+                                    try { showToast('Added to calendar'); } catch {}
+                                    setCalPickVisible(false);
+                                } catch (e) {
+                                    try { showToast('Calendar not available in this build'); } catch {}
+                                } finally { setCalBusy(false); calPendingEventsRef.current = null; }
+                            }} style={{ paddingVertical: 8 }}>
+                                <Text style={{ color: '#111827' }}>{c.title || c.name || c.id}</Text>
+                            </TouchableOpacity>
+                        ))}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+                            <Button title={calBusy ? 'Working…' : 'Cancel'} onPress={() => { if (!calBusy) setCalPickVisible(false); }} />
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 			{error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
 			<View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
 				<TextInput

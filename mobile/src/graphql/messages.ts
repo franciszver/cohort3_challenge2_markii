@@ -52,6 +52,7 @@ export async function listMessagesByConversation(
           attachments
           messageType
           senderId
+          metadata
           editedAt
           createdAt
           updatedAt
@@ -71,12 +72,22 @@ export async function getLatestMessageInConversation(conversationId: string) {
   const query = /* GraphQL */ `
     query LatestMessage($conversationId: String!, $limit: Int, $sortDirection: ModelSortDirection) {
       messagesByConversationIdAndCreatedAt(conversationId: $conversationId, limit: $limit, sortDirection: $sortDirection) {
-        items { id createdAt content senderId }
+        items { id createdAt content senderId metadata }
       }
     }
   `;
   const res: any = await getClient().graphql({ query, variables: { conversationId, limit: 1, sortDirection: 'DESC' }, authMode: 'userPool' });
   return res?.data?.messagesByConversationIdAndCreatedAt?.items?.[0] || null;
+}
+
+export async function getMessageById(id: string) {
+  const query = /* GraphQL */ `
+    query GetMessage($id: ID!) {
+      getMessage(id: $id) { id metadata content messageType updatedAt }
+    }
+  `;
+  const res: any = await getClient().graphql({ query, variables: { id }, authMode: 'userPool' });
+  return res?.data?.getMessage || null;
 }
 
 // removed unused countMessagesAfter
@@ -95,6 +106,7 @@ export async function createTextMessage(
         attachments
         messageType
         senderId
+        metadata
         createdAt
         updatedAt
       }
@@ -120,6 +132,7 @@ export function subscribeMessagesInConversation(conversationId: string) {
         attachments
         messageType
         senderId
+        metadata
         createdAt
         updatedAt
       }
@@ -140,6 +153,7 @@ function subscribeMessagesViaOnCreate(conversationId: string) {
         attachments
         messageType
         senderId
+        metadata
         createdAt
         updatedAt
       }
@@ -264,6 +278,7 @@ async function listMessagesByFilter(
           attachments
           messageType
           senderId
+          metadata
           createdAt
           updatedAt
         }

@@ -3,6 +3,13 @@
 **/.env
 **/.env.*
 !**/.env.example
+env.json
+!env.example.json
+
+# Local test scripts and payloads (avoid committing secrets)
+openaitest.ps1
+payload.json
+out.json
 
 **/amplify/**
 
