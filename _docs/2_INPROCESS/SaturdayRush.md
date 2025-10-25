@@ -7,6 +7,13 @@
 - Add new capabilities: event conflict warnings, decision summarization, priority highlighting, RSVP tracking, deadline extraction.
 - Allow the assistant chat to include multiple participants (group assistant chat) with add participants flow.
 
+### Requirement Status (at‑a‑glance)
+- [Completed] Conversation history retrieval (RAG pipeline)
+- [Completed] User preference storage
+- [Partial] Function calling capabilities
+- [Completed] Memory/state management across interactions
+- [Completed] Error handling and recovery
+
 ### Current State (Implemented)
 - OpenAI replies (flag `ASSISTANT_OPENAI_ENABLED`): strict 6s timeout; validated JSON `{ text, events?[] }`; fallback to weekend template on failure.
 - Events delivery: assistant emits `metadata.events` and `attachments:['events:{...}']`; mobile shows “Add to calendar” CTA; target calendar is chosen once and persisted; writes via `expo-calendar`.
@@ -45,6 +52,28 @@
 - Recipes: `metadata.recipes = [{ title, ingredients[], steps[] }]`; attachment sentinel `recipes:{"recipes":[...]}`.
 - Preferences: `SYSTEM` messages with `metadata:{ type:'preferences', data:{...} }`; attachment `pref:{...}`; content token fallback `pref:{...}`.
 - Lists: `SYSTEM` messages with `metadata:{ type:'list', id, title, items[] }`; attachment `list:{...}`; content token fallback.
+
+### AI Framework Implementation & Compliance
+- [Completed] Conversation history retrieval (RAG pipeline)
+  - Lambda retrieves the last ~10 messages per conversation for prompt context and logic decisions.
+- [Completed] User preference storage
+  - Preferences are written/read via SYSTEM messages with `metadata.type='preferences'` and attachment sentinels; merged forward across interactions.
+- [Partial] Function calling capabilities
+  - Today: deterministic server-side capabilities (recipes fetch, preferences/lists CRUD, events emission) are invoked directly by the Lambda based on intent and flags, with strict JSON I/O contracts, not OpenAI “tool calling”.
+  - Planned: add explicit OpenAI function/tool-calling (or integrate a recommended framework) behind a flag to allow model-directed tool selection while preserving fallbacks.
+- [Completed] Memory/state management across interactions
+  - Message-based memory (preferences, lists) and idempotency (request dedup) provide continuity across turns without new schema dependencies.
+- [Completed] Error handling and recovery
+  - Strict JSON validation, bounded timeouts (OpenAI 6s; recipes ~3.5s), attachment sentinel fallbacks, metadata refetch retries, and a safe weekend-template fallback ensure graceful degradation.
+
+### Executive Summary (Framework Choice)
+- We met the functional requirements using a lean, flag-gated Lambda “mini-agent” instead of a heavy framework. This keeps latency low, avoids regressions, and fits our current surface area:
+  - Conversation context and memory are implemented via GraphQL reads and SYSTEM message metadata; no schema changes required.
+  - Capabilities (recipes, calendar events, preferences/lists) are deterministic server tools exposed inside the Lambda with strict JSON interfaces.
+  - Robust fallbacks guarantee the app behaves identically when flags are off or external calls fail.
+- Migration path is straightforward if leadership wants a named framework:
+  - OpenAI function-calling can replace the current JSON contract without changing client UI.
+  - Vercel AI SDK, Swarm, or LangChain can orchestrate the same tools behind the existing flags; the attachment/metadata contracts and mobile CTAs remain unchanged.
 
 ### New Work — Detailed (Flag‑Gated)
 All new features must be fully reversible via flags, validate strict JSON, and degrade gracefully (omit metadata when validation fails). Attach a sentinel string as a client fallback.
