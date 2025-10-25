@@ -1,7 +1,7 @@
 ﻿### Emulator Test Checklist â€” Epic 1
 
 Before running:
-- PowerShell: `$env:AWS_PROFILE='ciscodg@gmail'`
+- PowerShell: `$env:AWS_PROFILE='my-aws-profile'`
 - Ensure `.env` is populated with valid IDs and endpoint.
 
 Steps:

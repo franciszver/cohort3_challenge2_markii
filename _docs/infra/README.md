@@ -3,7 +3,7 @@
 - Ensure profile is set in PowerShell before running commands:
 
 ```powershell
-$env:AWS_PROFILE='ciscodg@gmail'
+$env:AWS_PROFILE='my-aws-profile'
 ```
 
 - Deploy (region `us-east-1`):

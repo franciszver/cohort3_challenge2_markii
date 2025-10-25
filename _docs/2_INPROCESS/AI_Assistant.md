@@ -104,13 +104,28 @@
 
 ### To-dos
 
-- [ ] Add ASSISTANT_ENABLED feature flag in mobile and default to false
-- [ ] Add Assistant entry in ConversationList to open/create bot conversation
-- [ ] Create AWS Lambda HTTP endpoint in scripts/agent for weekend planner
-- [ ] Implement IAM-signed GraphQL client in Lambda for listMessages/sendMessage/profile ops
-- [ ] Implement OpenAI tool-calling logic with RAG over recent messages
-- [ ] From ChatScreen, call agent endpoint after user sends message in assistant chat
-- [ ] Show transient typing indicator until assistant reply arrives
-- [ ] Add resilient error handling and user-visible fallback messages
-- [ ] Store OpenAI key in Secrets Manager; configure IAM for AppSync
-- [ ] Test end-to-end behind flag; enable for limited users
+- [x] Add ASSISTANT_ENABLED feature flag in mobile and default to false (local override true)
+- [x] Add Assistant entry in ConversationList to open/create bot conversation
+- [x] Create AWS Lambda HTTP endpoint in `scripts/agent` for weekend planner (POST /agent/weekend-plan)
+- [x] Implement GraphQL client in Lambda for listMessages/createMessage (IAM or JWT pass-through)
+- [ ] Implement OpenAI tool-calling logic with RAG over recent messages (post-MVP)
+- [x] From ChatScreen, call agent endpoint after user sends message in assistant chat
+- [x] Show transient "Assistant is thinking…" until assistant reply arrives
+- [x] Add resilient error handling and user-visible fallback messages
+- [ ] Store OpenAI key in Secrets Manager; configure IAM for AppSync (post-MVP, not needed for single-tool)
+- [x] Test end-to-end behind flag; enable for limited users
+
+### Status (Executed)
+
+- Assistant chat is feature-flagged and working end-to-end.
+- Lambda receives the request, reads recent messages, and replies with a simple weekend plan template.
+- Replies are posted via AppSync `createMessage` as `assistant-bot`; frontend subscriptions display them.
+- Added a Getting Started modal (flag-gated “?”) with example prompts.
+- Robust logging in both client and Lambda; JWT pass-through supported.
+
+### Next Steps
+
+1. Replace the fixed template with OpenAI-generated summaries and options (tool-calling; same getRecentMessages tool).
+2. Add preferences read/write tools and simple saved-lists (server-side only).
+3. Optional: calendar export (emit `events[]` payload; add Expo calendar CTA).
+4. Harden ops: move secrets to Secrets Manager; least-privilege IAM; per-env configs.
