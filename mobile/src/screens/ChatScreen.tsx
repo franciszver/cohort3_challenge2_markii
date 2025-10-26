@@ -617,7 +617,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 	};
 
 	return (
-		<View style={{ flex: 1 }}>
+		<View style={{ flex: 1, backgroundColor: theme.colors.background }}>
 			<View style={{ flexDirection: 'row', alignItems: 'center' }}>
 				<View style={{ flex: 1 }}>
 					{(() => { const { ENABLE_CHAT_UX } = getFlags(); return (
@@ -757,178 +757,19 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 									setInfoVisible(true);
 								}
 								}}>
-									<Text>
-                                        {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? '' : `${item.senderId === myId ? 'Me' : item.senderId}: `}
-										{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
-										{item.__status ? ' ' : ''}
-										{item.__status === 'sent' ? '✓' : null}
-										{item.__status === 'delivered' ? <Text style={{ color: '#6b7280' }}>✓✓</Text> : null}
-										{item.__status === 'read' ? <Text style={{ color: '#3b82f6' }}>✓✓</Text> : null}
-									</Text>
-									<Text style={{ color: '#6b7280', fontSize: 12 }}>
-										{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
-									</Text>
-									{(() => { try {
-										const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
-										if (!ASSISTANT_CALENDAR_ENABLED) return null;
-										if (item.senderId !== 'assistant-bot') return null;
-                            const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
-                            let evs = Array.isArray(meta?.events) ? meta.events : [];
-                            if (!evs.length && Array.isArray((item as any).attachments)) {
-                                try {
-                                    const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('events:'));
-                                    if (hit) {
-                                        const payload = hit.slice('events:'.length);
-                                        try { const obj = JSON.parse(payload); if (Array.isArray(obj?.events) && obj.events.length) evs = obj.events; } catch {}
-                                    }
-                                } catch {}
-                            }
-										if (!evs.length) return null;
-                            return (
-											<View style={{ marginTop: 6 }}>
-												<TouchableOpacity
-                                        onPress={async () => {
-                                            try {
-                                                        const perm = await Calendar.requestCalendarPermissionsAsync();
-                                                        if (perm.status !== 'granted') { try { showToast('Calendar permission denied'); } catch {} return; }
-                                                    // Conflicts pre-check and confirmation (flag-gated)
-                                                    try {
-                                                        const { ASSISTANT_CONFLICTS_ENABLED } = getFlags();
-                                                        if (ASSISTANT_CONFLICTS_ENABLED) {
-                                                            // Parse conflicts from metadata or sentinel
-                                                            let conflicts: any[] = [];
-                                                            try {
-                                                                const metaAny = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
-                                                                conflicts = Array.isArray((metaAny as any)?.conflicts) ? (metaAny as any).conflicts : [];
-                                                            } catch {}
-                                                            // If not present, re-fetch full message a few times to allow backend metadata update
-                                                            if (!(conflicts && conflicts.length)) {
-                                                                for (let i = 0; i < 5 && !(conflicts && conflicts.length); i++) {
-                                                                    try {
-                                                                        const full = await getMessageById((item as any).id);
-                                                                        const meta2 = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
-                                                                        if (Array.isArray((meta2 as any)?.conflicts) && (meta2 as any).conflicts.length) {
-                                                                            conflicts = (meta2 as any).conflicts;
-                                                                            break;
-                                                                        }
-                                                                    } catch {}
-                                                                    const delay = 250 + i*300;
-                                                                    await new Promise(r => setTimeout(r, delay));
-                                                                }
-                                                            }
-                                                            if (!(conflicts && conflicts.length) && Array.isArray((item as any).attachments)) {
-                                                                try {
-                                                                    const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('conflicts:'));
-                                                                    if (hit) {
-                                                                        const payload = hit.slice('conflicts:'.length);
-                                                                        try { const obj = JSON.parse(payload); if (Array.isArray(obj?.conflicts) && obj.conflicts.length) conflicts = obj.conflicts; } catch {}
-                                                                    }
-                                                                } catch {}
-                                                            }
-                                                            if (conflicts && conflicts.length) { try { showToast(`Conflicts detected with ${conflicts.length} item(s)`); } catch {} }
-                                                        }
-                                                    } catch {}
-                                                // Prefer saved target id
-                                                try { calTargetIdRef.current = (await AsyncStorage.getItem('calendar:target')) || null; } catch {}
-                                                if (!calTargetIdRef.current) {
-                                                    const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-                                                    const writable = (cals || []).filter((c:any)=> c?.allowsModifications);
-                                                    if (!writable.length) { try { showToast('No writable calendar found'); } catch {} return; }
-                                                    calPendingEventsRef.current = evs.slice(0, 10);
-                                                    setCalChoices(writable);
-                                                    setCalPickVisible(true);
-                                                    return;
-                                                }
-                                                // Use saved calendar id
-                                                const targetId = calTargetIdRef.current;
-                                                for (const e of evs.slice(0, 10)) {
-                                                    try {
-                                                        await Calendar.createEventAsync(targetId!, {
-                                                            title: e.title || 'Assistant Event',
-                                                            startDate: new Date(e.startISO || Date.now()),
-                                                            endDate: new Date(e.endISO || (Date.now() + 60*60*1000)),
-                                                            notes: e.notes || undefined,
-                                                        });
-                                                    } catch {}
-                                                }
-                                                try { showToast('Added to calendar'); } catch {}
-                                            } catch (e) {
-                                                try { showToast('Calendar not available in this build'); } catch {}
-                                            }
-													}}
-													style={{ marginTop: 4 }}
-												>
-                                                <Text style={{ color: '#3b82f6', fontWeight: '600' }}>Add to calendar</Text>
-												</TouchableOpacity>
-                                                {(() => { try {
-                                                    const { ASSISTANT_CONFLICTS_ENABLED } = getFlags();
-                                                    if (!ASSISTANT_CONFLICTS_ENABLED) return null;
-                                                    const metaAny = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
-                                                    let conflicts = Array.isArray((metaAny as any)?.conflicts) ? (metaAny as any).conflicts : [];
-                                                    if (!(conflicts && conflicts.length) && Array.isArray((item as any).attachments)) {
-                                                        try {
-                                                            const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('conflicts:'));
-                                                            if (hit) { const payload = hit.slice('conflicts:'.length); const obj = JSON.parse(payload); if (Array.isArray(obj?.conflicts) && obj.conflicts.length) conflicts = obj.conflicts; }
-                                                        } catch {}
-                                                    }
-                                                    if (!(conflicts && conflicts.length)) return null;
-                                                    return <Text style={{ color: '#ef4444', marginTop: 4 }}>Conflicts detected</Text>;
-                                                } catch { return null; } })()}
-											</View>
-										);
-									} catch { return null; } })()}
-								{(() => { try {
-									if (item.senderId !== 'assistant-bot') return null;
-									const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
-									let recs = Array.isArray((meta as any)?.recipes) ? (meta as any).recipes : [];
-									if (!recs.length && Array.isArray((item as any).attachments)) {
-										try {
-											const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('recipes:'));
-											if (hit) {
-												const payload = hit.slice('recipes:'.length);
-												try { const obj = JSON.parse(payload); if (Array.isArray(obj?.recipes) && obj.recipes.length) recs = obj.recipes; } catch {}
-											}
-										} catch {}
-									}
-									if (!recs.length) return null;
-									return (
-										<View style={{ marginTop: 6 }}>
-											<TouchableOpacity
-												onPress={() => { try { setRecipesItems(recs.slice(0, 3)); setRecipesVisible(true); } catch {} }}
-												style={{ marginTop: 4 }}
-											>
-												<Text style={{ color: '#3b82f6', fontWeight: '600' }}>View recipes</Text>
-											</TouchableOpacity>
-										</View>
-									);
-								} catch { return null; } })()}
-                                {(() => { try {
-                                    const { ASSISTANT_DECISIONS_ENABLED } = getFlags();
-                                    if (!ASSISTANT_DECISIONS_ENABLED) return null;
-                                    if (item.senderId !== 'assistant-bot') return null;
-                                    const meta = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
-                                    let decs = Array.isArray((meta as any)?.decisions) ? (meta as any).decisions : [];
-                                    if (!decs.length && Array.isArray((item as any).attachments)) {
-                                        try {
-                                            const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('decisions:'));
-                                            if (hit) {
-                                                const payload = hit.slice('decisions:'.length);
-                                                try { const obj = JSON.parse(payload); if (Array.isArray(obj?.decisions) && obj.decisions.length) decs = obj.decisions; } catch {}
-                                            }
-                                        } catch {}
-                                    }
-                                    if (!decs.length) return null;
-                                    return (
-                                        <View style={{ marginTop: 6 }}>
-                                            <TouchableOpacity
-                                                onPress={() => { try { setDecisionsItems(decs.slice(0, 5)); setDecisionsVisible(true); } catch {} }}
-                                                style={{ marginTop: 4 }}
-                                            >
-                                                <Text style={{ color: '#3b82f6', fontWeight: '600' }}>View decisions</Text>
-                                            </TouchableOpacity>
-                                        </View>
-                                    );
-                                } catch { return null; } })()}
+									<View style={{ maxWidth: '88%', alignSelf: item.senderId === myId ? 'flex-end' : 'flex-start', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }}>
+										<Text style={{ color: theme.colors.textPrimary }}>
+											{(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? '' : `${item.senderId === myId ? 'Me' : item.senderId}: `}
+											{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
+											{item.__status ? ' ' : ''}
+											{item.__status === 'sent' ? '✓' : null}
+											{item.__status === 'delivered' ? <Text style={{ color: theme.colors.textSecondary }}>✓✓</Text> : null}
+											{item.__status === 'read' ? <Text style={{ color: theme.colors.primary }}>✓✓</Text> : null}
+										</Text>
+										<Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
+											{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
+										</Text>
+									</View>
 								</TouchableOpacity>
 							)}
 						</View>
@@ -1024,10 +865,10 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                 </View>
             </Modal>
 			{error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
-			<View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
+			<View style={{ flexDirection: 'row', padding: 8, gap: 8, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
 				<TextInput
 					ref={messageInputRef}
-					style={{ flex: 1, borderWidth: 1, padding: 8 }}
+					style={{ flex: 1, borderWidth: 1, padding: 10, borderColor: theme.colors.border, backgroundColor: 'white', borderRadius: 8 }}
 					value={input}
 					onChangeText={onChangeInput}
 					placeholder="Message"
@@ -1035,12 +876,14 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					blurOnSubmit={false}
 					onSubmitEditing={() => { onSend(); messageInputRef.current?.focus?.(); }}
 				/>
-				<Button title="Send" onPress={onSend} />
+				<TouchableOpacity onPress={onSend} accessibilityLabel="Send message" style={{ backgroundColor: '#F2EFEA', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
+					<Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send</Text>
+				</TouchableOpacity>
 			</View>
-			<View style={{ flexDirection: 'row', padding: 8, gap: 8 }}>
+			<View style={{ flexDirection: 'row', padding: 8, gap: 8, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
 				<TextInput
 					ref={imageInputRef}
-					style={{ flex: 1, borderWidth: 1, padding: 8 }}
+					style={{ flex: 1, borderWidth: 1, padding: 10, borderColor: theme.colors.border, backgroundColor: 'white', borderRadius: 8 }}
 					value={imageUrl}
 					onChangeText={setImageUrl}
 					placeholder="Image URL"
@@ -1049,7 +892,9 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					blurOnSubmit={false}
 					onSubmitEditing={() => { onSendImage(); imageInputRef.current?.focus?.(); }}
 				/>
-				<Button title="Send Image" onPress={onSendImage} />
+				<TouchableOpacity onPress={onSendImage} accessibilityLabel="Send image" style={{ backgroundColor: '#F2EFEA', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
+					<Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send Image</Text>
+				</TouchableOpacity>
 			</View>
 		</View>
 	);
