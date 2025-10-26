@@ -31,6 +31,7 @@ export default function AuthScreen({ navigation }: any) {
     const [isOnline, setIsOnline] = useState<boolean>(true);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const safe = (obj: any) => {
     try {
@@ -139,7 +140,7 @@ export default function AuthScreen({ navigation }: any) {
       // Seed profile softly (skip names in sign-in)
       try { const { ENABLE_PROFILES } = getFlags(); if (ENABLE_PROFILES) { const me = await getCurrentUser(); const avatar = colorForId(me.userId); await ensureProfileSeed(me.userId, { avatarColor: avatar }); } } catch {}
       try { if (getFlags().ENABLE_AUTH_UX) await AsyncStorage.setItem('auth:email', email.trim()); } catch {}
-      navigation.replace('Conversations');
+      navigation.replace('Conversations', { fromAuth: true });
     } catch (e: any) {
       appendLog('signIn error', { name: e?.name, message: e?.message, code: e?.code, raw: e, stack: e?.stack, cause: e?.cause });
       appendLog('env extra', (Constants.expoConfig?.extra || Constants.manifest?.extra || {}));
@@ -208,17 +209,22 @@ export default function AuthScreen({ navigation }: any) {
       {mode !== 'initial' ? (
         <>
           <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>Password</Text>
-          <TextInput
-            placeholder={mode === 'signup' ? 'Choose a password' : 'Password'}
-            secureTextEntry
-            returnKeyType="go"
-            value={password}
-            onChangeText={(t)=>{ setPassword(t); }}
-            onFocus={() => setPasswordFocused(true)}
-            onBlur={() => setPasswordFocused(false)}
-            onSubmitEditing={() => { if (mode === 'signin') onSignIn(); else if (mode === 'signup') onSignUp(); }}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
-          />
+          <View style={{ position: 'relative', marginBottom: 8 }}>
+            <TextInput
+              placeholder={mode === 'signup' ? 'Choose a password' : 'Password'}
+              secureTextEntry={!showPassword}
+              returnKeyType="go"
+              value={password}
+              onChangeText={(t)=>{ setPassword(t); }}
+              onFocus={() => setPasswordFocused(true)}
+              onBlur={() => setPasswordFocused(false)}
+              onSubmitEditing={() => { if (mode === 'signin') onSignIn(); else if (mode === 'signup') onSignUp(); }}
+              style={{ borderWidth: 1, padding: 10, paddingRight: 64, backgroundColor: 'white', borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            />
+            <TouchableOpacity onPress={() => setShowPassword(v => !v)} accessibilityLabel={showPassword ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 8, top: 8, paddingVertical: 6, paddingHorizontal: 8 }}>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{showPassword ? 'Hide' : 'Show'}</Text>
+            </TouchableOpacity>
+          </View>
           {mode === 'signup' ? (
             <Text style={{ color: '#374151', marginBottom: 4 }}>Please choose a password to create your account.</Text>
           ) : null}

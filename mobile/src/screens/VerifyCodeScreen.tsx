@@ -34,7 +34,7 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
       try {
         if (password) {
           await signIn({ username: email, password, options: { authFlowType: 'USER_PASSWORD_AUTH' as any } });
-          navigation.replace('Conversations');
+          navigation.replace('Conversations', { fromAuth: true });
         } else {
           navigation.replace('Auth');
         }

@@ -1,10 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput, RefreshControl } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
-import { listConversationsForUser, getConversation, listParticipantsForConversation, ensureDirectConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead, createConversation } from '../graphql/conversations';
+import { listConversationsForUser, getConversation, listParticipantsForConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead, createConversation } from '../graphql/conversations';
 import { batchGetUsersCached, getUserById } from '../graphql/users';
 import { batchGetProfilesCached } from '../graphql/profile';
 import { getLatestMessageInConversation } from '../graphql/messages';
@@ -19,7 +18,7 @@ import { subscribeToasts, showToast } from '../utils/toast';
 import { getUserProfile, updateUserProfile, invalidateProfileCache } from '../graphql/profile';
 import { useTheme } from '../utils/theme';
 
-export default function ConversationListScreen({ navigation }: any) {
+export default function ConversationListScreen({ route, navigation }: any) {
   const theme = useTheme();
   const [items, setItems] = useState<any[]>([]);
   const [allItems, setAllItems] = useState<any[]>([]);
@@ -29,9 +28,6 @@ export default function ConversationListScreen({ navigation }: any) {
   const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
   const [showId, setShowId] = useState(false);
   const [myId, setMyId] = useState<string>('');
-  const [showSolo, setShowSolo] = useState(false);
-  const [soloOtherId, setSoloOtherId] = useState('');
-  const [soloBusy, setSoloBusy] = useState(false);
   const [banner, setBanner] = useState<{ conversationId: string; preview: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -42,7 +38,67 @@ export default function ConversationListScreen({ navigation }: any) {
   const [meProfile, setMeProfile] = useState<{ firstName?: string; lastName?: string; email?: string } | null>(null);
   const [meSaving, setMeSaving] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   // debug logs removed
+
+  async function openProfile() {
+    try {
+      const meNow = await getCurrentUser();
+      // Build initial fields from fast local sources first
+      let first = '';
+      let last = '';
+      let email = '';
+      try {
+        const session: any = await fetchAuthSession();
+        const claims: any = session?.tokens?.idToken?.payload || {};
+        first = claims.given_name || '';
+        last = claims.family_name || '';
+        email = claims.email || '';
+      } catch (e) {}
+      try {
+        if (!email) {
+          const meNow2: any = await getCurrentUser();
+          email = meNow2?.username || meNow2?.signInDetails?.loginId || '';
+        }
+      } catch (e) {}
+      // Local cache quick fill
+      try {
+        const localRaw = await AsyncStorage.getItem('profile:self');
+        const local = localRaw ? JSON.parse(localRaw) : null;
+        first = first || (local?.firstName || '');
+        last = last || (local?.lastName || '');
+        email = email || (local?.email || '');
+      } catch (e) {}
+      // Show modal immediately with best-known values
+      setMeProfile({ firstName: first, lastName: last, email });
+      setShowMe(true);
+      // Fetch UserProfile in background with timeout to refine values
+      const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(undefined as unknown as T), ms))]);
+      try {
+        const r: any = await withTimeout(getUserProfile(meNow.userId), 2000);
+        const p = r?.data?.getUserProfile;
+        if (p) {
+          const nf = p.firstName || first;
+          const nl = p.lastName || last;
+          const ne = p.email || email;
+          setMeProfile({ firstName: nf, lastName: nl, email: ne });
+        }
+      } catch (e) {}
+      // As last resort, Users table for email
+      if (!email) {
+        try {
+          const ur: any = await getUserById(meNow.userId);
+          const u = ur?.data?.getUser;
+          if (u?.email) {
+            setMeProfile(prev => ({ ...(prev || {}), email: u.email }));
+          }
+        } catch (e) {}
+      }
+    } catch (e) {
+      setMeProfile({ firstName: '', lastName: '', email: '' });
+      setShowMe(true);
+    }
+  }
 
   const isLoadingRef = useRef(false);
   const lastLoadedAtRef = useRef(0);
@@ -55,73 +111,15 @@ export default function ConversationListScreen({ navigation }: any) {
       setError(null);
       const me = await getCurrentUser();
       setMyId(me.userId);
-      // Header actions
+      // Header actions and theming
       navigation.setOptions({
+        headerTitleStyle: { fontSize: 20, fontWeight: '600', color: theme.colors.textPrimary },
+        headerStyle: { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border, borderBottomWidth: 1 },
+        headerTitleAlign: 'center',
         headerRight: () => (
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button title="My ID" onPress={() => setShowId(true)} />
-            {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
-              <Button title="Profile" onPress={async () => {
-                try {
-                  const meNow = await getCurrentUser();
-                  // Build initial fields from fast local sources first
-                  let first = '';
-                  let last = '';
-                  let email = '';
-                  try {
-                    const session: any = await fetchAuthSession();
-                    const claims: any = session?.tokens?.idToken?.payload || {};
-                    first = claims.given_name || '';
-                    last = claims.family_name || '';
-                    email = claims.email || '';
-                  } catch (e) {}
-                  try {
-                    if (!email) {
-                      const meNow2: any = await getCurrentUser();
-                      email = meNow2?.username || meNow2?.signInDetails?.loginId || '';
-                    }
-                  } catch (e) {}
-                  // Local cache quick fill
-                  try {
-                    const localRaw = await AsyncStorage.getItem('profile:self');
-                    const local = localRaw ? JSON.parse(localRaw) : null;
-                    first = first || (local?.firstName || '');
-                    last = last || (local?.lastName || '');
-                    email = email || (local?.email || '');
-                  } catch (e) {}
-                  // Show modal immediately with best-known values
-                  setMeProfile({ firstName: first, lastName: last, email });
-                  setShowMe(true);
-                  // Fetch UserProfile in background with timeout to refine values
-                  const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(undefined as unknown as T), ms))]);
-                  try {
-                    const r: any = await withTimeout(getUserProfile(meNow.userId), 2000);
-                    const p = r?.data?.getUserProfile;
-                    if (p) {
-                      const nf = p.firstName || first;
-                      const nl = p.lastName || last;
-                      const ne = p.email || email;
-                      setMeProfile({ firstName: nf, lastName: nl, email: ne });
-                    }
-                  } catch (e) {}
-                  // As last resort, Users table for email
-                  if (!email) {
-                    try {
-                      const ur: any = await getUserById(meNow.userId);
-                      const u = ur?.data?.getUser;
-                      if (u?.email) {
-                        setMeProfile(prev => ({ ...(prev || {}), email: u.email }));
-                      }
-                    } catch (e) {}
-                  }
-                } catch (e) {
-                  setMeProfile({ firstName: '', lastName: '', email: '' });
-                  setShowMe(true);
-                }
-              }} />
-            ) : null}
-            <Button title="Sign Out" onPress={async () => { try { await signOut(); } catch {} navigation.replace('Auth'); }} />
-          </View>
+          <TouchableOpacity accessibilityLabel="Menu" onPress={() => setShowMenu(true)} style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
+            <Text style={{ fontSize: 22, color: theme.colors.textPrimary }}>☰</Text>
+          </TouchableOpacity>
         ),
       });
       // Fetch ALL conversations (paginate) and capture my lastReadAt per conversation
@@ -287,11 +285,22 @@ export default function ConversationListScreen({ navigation }: any) {
       try { await Notifications.setBadgeCountAsync?.((ENABLE_UNREAD_BADGE ? convs.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) : 0) as any); } catch {}
       setNextToken(undefined);
       lastLoadedAtRef.current = Date.now();
-    } catch (e: any) { setError(e?.message ?? 'Load failed'); }
+    } catch (e: any) { setError(e?.message || 'Load failed'); }
     finally { isLoadingRef.current = false; setIsInitialLoading(false); }
-  }, [navigation]);
+  }, [navigation, theme.colors.border, theme.colors.surface, theme.colors.textPrimary]);
 
   useEffect(() => { load(); }, [load]);
+  // Show hint when coming from Auth
+  useEffect(() => {
+    try {
+      if (route?.params?.fromAuth) {
+        showToast('Quick actions available: + New Convo • Ai');
+        // clear flag so it shows only when explicitly coming again from Auth
+        try { navigation.setParams({ fromAuth: undefined }); } catch {}
+      }
+    } catch {}
+  }, [route?.params?.fromAuth]);
+
   useFocusEffect(useCallback(() => {
     load(true);
     // subscribe to toast bus
@@ -366,7 +375,7 @@ export default function ConversationListScreen({ navigation }: any) {
     } catch {}
   }
 
-  // Debounced search filter
+  // Debounced search filter (kept but not rendered)
   const applyFilter = useMemo(() => debounce((q: string) => {
     const term = (q || '').trim().toLowerCase();
     if (!term) { setItems(allItems); return; }
@@ -387,31 +396,40 @@ export default function ConversationListScreen({ navigation }: any) {
   return (
     <View style={{ flex: 1, padding: 12, backgroundColor: theme.colors.background }}>
       {null}
-      {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() ? (
+      <View style={{ position: 'absolute', right: 16, bottom: 16, zIndex: 20, alignItems: 'flex-end', gap: 10 }}>
         <TouchableOpacity
-          onPress={async () => {
-            try {
-              const me = await getCurrentUser();
-              const cid = `assistant::${me.userId}`;
-              try {
-                const r: any = await getConversation(cid);
-                const exists = !!r?.data?.getConversation?.id;
-                if (!exists) {
-                  try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
-                  try { await load(true); } catch {}
-                }
-              } catch {
-                try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
-              }
-              navigation.navigate('Chat', { conversationId: cid });
-            } catch {}
-          }}
-          accessibilityLabel="Open Assistant"
-          style={{ position: 'absolute', right: 16, bottom: 16, zIndex: 20, backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}
+          onPress={() => navigation.navigate('GroupCreate')}
+          accessibilityLabel="New conversation"
+          style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}
         >
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>Ai+</Text>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>+ New Convo</Text>
         </TouchableOpacity>
-      ) : null}
+        {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() ? (
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                const me = await getCurrentUser();
+                const cid = `assistant::${me.userId}`;
+                try {
+                  const r: any = await getConversation(cid);
+                  const exists = !!r?.data?.getConversation?.id;
+                  if (!exists) {
+                    try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
+                    try { await load(true); } catch {}
+                  }
+                } catch {
+                  try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
+                }
+                navigation.navigate('Chat', { conversationId: cid });
+              } catch {}
+            }}
+            accessibilityLabel="Open Assistant"
+            style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}
+          >
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>Ai</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
       {null}
       {error ? (
         <View style={{ paddingVertical: 12 }}>
@@ -533,10 +551,28 @@ export default function ConversationListScreen({ navigation }: any) {
         >
           <View style={{ backgroundColor: '#111827', padding: 12, borderRadius: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8 }}>
             <Text style={{ color: 'white', fontWeight: '600' }}>New message</Text>
-            <Text style={{ color: '#d1d5db' }} numberOfLines={1}>{banner.preview}</Text>
+            <Text numberOfLines={1} style={{ color: '#d1d5db' }}>{banner.preview}</Text>
           </View>
         </TouchableOpacity>
       ) : null}
+      {/* Hamburger menu modal */}
+      <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setShowMenu(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.1)' }}>
+          <View style={{ position: 'absolute', top: 56, right: 12, backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, padding: 8, minWidth: 180, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8 }}>
+            <TouchableOpacity onPress={() => { setShowMenu(false); setShowId(true); }} style={{ paddingVertical: 8, paddingHorizontal: 8 }}>
+              <Text style={{ color: theme.colors.textPrimary }}>My ID</Text>
+            </TouchableOpacity>
+            {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
+              <TouchableOpacity onPress={() => { setShowMenu(false); openProfile(); }} style={{ paddingVertical: 8, paddingHorizontal: 8 }}>
+                <Text style={{ color: theme.colors.textPrimary }}>Profile</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity onPress={async () => { setShowMenu(false); try { await signOut(); } catch {} navigation.replace('Auth'); }} style={{ paddingVertical: 8, paddingHorizontal: 8 }}>
+              <Text style={{ color: theme.colors.textPrimary }}>Sign Out</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
       <Modal visible={showId} transparent animationType="fade" onRequestClose={() => setShowId(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
@@ -560,49 +596,6 @@ export default function ConversationListScreen({ navigation }: any) {
             <Text style={{ color: '#6b7280', marginBottom: 12 }}>You’ll see a friendly summary and a simple plan.</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
               <Button title="Close" onPress={() => setShowHelp(false)} />
-            </View>
-          </View>
-        </View>
-      </Modal>
-      <Modal visible={showSolo} transparent animationType="fade" onRequestClose={() => setShowSolo(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Start Direct Chat</Text>
-            <Text style={{ color: '#6b7280', marginBottom: 8 }}>Paste the other user's ID (sub):</Text>
-            <View style={{ borderWidth: 1, padding: 8, marginBottom: 12 }}>
-              <TextInput
-                placeholder="Other user's ID"
-                value={soloOtherId}
-                onChangeText={setSoloOtherId}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-              <Button title="Cancel" onPress={() => setShowSolo(false)} />
-              <Button
-                title={soloBusy ? 'Starting…' : 'Start'}
-                onPress={async () => {
-                  if (!soloOtherId.trim()) return;
-                  try {
-                    setSoloBusy(true);
-                    const me = await getCurrentUser();
-                    const a = me.userId;
-                    const b = soloOtherId.trim();
-                    // Create a fresh unique 1:1 conversation id to start a new thread
-                    const freshId = `${[a, b].sort().join('#')}-${Date.now()}`;
-                    await ensureDirectConversation(freshId, a, b);
-                    // One-time refresh to ensure the new conversation appears immediately
-                    try { await load(true); } catch {}
-                    setShowSolo(false);
-                    setSoloBusy(false);
-                    navigation.navigate('Chat', { conversationId: freshId, otherUserSub: b });
-                  } catch {
-                    setSoloBusy(false);
-                  }
-                }}
-                disabled={soloBusy || !soloOtherId.trim()}
-              />
             </View>
           </View>
         </View>

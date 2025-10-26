@@ -89,9 +89,9 @@ export default function App() {
             <Stack.Screen name="ForgotPasswordRequest" component={ForgotPasswordRequestScreen} />
             <Stack.Screen name="ForgotPasswordCode" component={ForgotPasswordCodeScreen} />
             <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />
-            <Stack.Screen name="ForgotPasswordLinear" component={ForgotPasswordLinearScreen} />
+            <Stack.Screen name="ForgotPasswordLinear" component={ForgotPasswordLinearScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Home" component={HomeScreen} />
-            <Stack.Screen name="Conversations" component={ConversationListScreen} options={{ title: 'Conversations' }} />
+            <Stack.Screen name="Conversations" component={ConversationListScreen} options={{ title: 'Conversations', headerTitleAlign: 'center' }} />
             <Stack.Screen name="GroupCreate" component={GroupCreateScreen} options={{ title: 'Start a chat' }} />
             <Stack.Screen name="Chat" component={ChatScreen} />
           </Stack.Navigator>
