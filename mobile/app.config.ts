@@ -33,6 +33,7 @@ const config: ExpoConfig = {
     ENABLE_PROFILES: process.env.ENABLE_PROFILES ?? 'false',
     ENABLE_CONVERSATION_LIST_UX: process.env.ENABLE_CONVERSATION_LIST_UX ?? 'true',
     ENABLE_CHAT_UX: process.env.ENABLE_CHAT_UX ?? 'true',
+    ENABLE_ADD_TO_GROUP: process.env.ENABLE_ADD_TO_GROUP ?? 'false',
     ENABLE_UNREAD_BADGE: process.env.ENABLE_UNREAD_BADGE ?? 'true',
     ENABLE_AUTH_UX: process.env.ENABLE_AUTH_UX ?? 'true',
     ENABLE_NOTIFICATIONS_UX: process.env.ENABLE_NOTIFICATIONS_UX ?? 'true',

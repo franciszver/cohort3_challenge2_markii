@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert, ActivityIndicator } from 'react-native';
+import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, TouchableWithoutFeedback, Modal, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
-import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
+import { updateLastSeen, subscribeUserPresence, batchGetUsersCached, getEmailCacheSnapshot } from '../graphql/users';
 import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, getConversation } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
@@ -50,6 +50,12 @@ export default function ChatScreen({ route, navigation }: any) {
 	const [isLoadingMore, setIsLoadingMore] = useState(false);
     const retryTimerRef = useRef<any>(null);
     const drainIntervalRef = useRef<any>(null);
+    // Add-to-group feature state (flag-gated)
+    const [addVisible, setAddVisible] = useState(false);
+    const [addInput, setAddInput] = useState('');
+    const [addBusy, setAddBusy] = useState(false);
+    const [addError, setAddError] = useState<string | null>(null);
+    const [conversationId, setConversationId] = useState<string>('');
 	const didInitialScrollRef = useRef(false);
 	const isNearBottomRef = useRef(true);
 	const isUserDraggingRef = useRef(false);
@@ -58,6 +64,7 @@ const otherUserId = route.params?.otherUserSub as string;
 	const providedConversationId = route.params?.conversationId as string | undefined;
 	const [infoVisible, setInfoVisible] = useState(false);
 	const [infoText, setInfoText] = useState<string>('');
+	const [menuVisible, setMenuVisible] = useState(false);
 const [otherProfile, setOtherProfile] = useState<any | null>(null);
 const [myId, setMyId] = useState<string>('');
 const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(undefined);
@@ -117,6 +124,8 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 
 	useEffect(() => {
 		(async () => {
+			let cid: string | undefined;
+			let otherId: string | undefined;
 			try {
                 const me = await getCurrentUser();
                 setMyId(me.userId);
@@ -131,11 +140,12 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                     const finalEmail = tokenEmail || cached || fallbackEmail;
                     if (finalEmail) setMyEmail(finalEmail);
                 } catch {}
-                let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+				cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
                 try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:init] me', me.userId, 'otherParam', otherUserId, 'cid', cid); } catch {}
 				if (!cid) throw new Error('No conversation target');
-                // Resolve other participant if provided via route
-                let otherId = otherUserId as string | undefined;
+                setConversationId(cid);
+				// Resolve other participant if provided via route
+				otherId = otherUserId as string | undefined;
                 // Load conversation metadata (name, group)
                 try {
                     const r: any = await getConversation(cid);
@@ -492,8 +502,10 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				} catch {}
 
                 // drain outbox with retry/backoff (one-time on mount)
-				const drainOnce = async () => {
-					const outboxRaw = await AsyncStorage.getItem(`outbox:${cid}`);
+                const drainOnce = async () => {
+                    if (!cid) return;
+                    const cidVal = String(cid);
+                    const outboxRaw = await AsyncStorage.getItem(`outbox:${cidVal}`);
 					const outbox = outboxRaw ? JSON.parse(outboxRaw) : [];
 					const remaining: any[] = [];
 					const resolveEmail = async () => {
@@ -509,10 +521,10 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						const attempts = job.attempts || 0;
 						try {
 							const emailToSend = await resolveEmail();
-							if (job.type === 'image' && job.imageUrl) {
-								await sendTextMessageCompat(cid, `[image] ${job.imageUrl}`, me.userId, emailToSend);
-							} else if (job.content) {
-								await sendTextMessageCompat(cid, job.content, me.userId, emailToSend);
+                            if (job.type === 'image' && job.imageUrl) {
+                                await sendTextMessageCompat(cidVal, `[image] ${job.imageUrl}`, me.userId, emailToSend);
+                            } else if (job.content) {
+                                await sendTextMessageCompat(cidVal, job.content, me.userId, emailToSend);
 							}
 						} catch {
 							job.attempts = attempts + 1;
@@ -521,10 +533,10 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 							remaining.push(job);
 						}
 					}
-					if (remaining.length) {
-						await AsyncStorage.setItem(`outbox:${cid}`, JSON.stringify(remaining));
-					} else {
-						await AsyncStorage.removeItem(`outbox:${cid}`);
+                    if (remaining.length) {
+                        await AsyncStorage.setItem(`outbox:${cidVal}`, JSON.stringify(remaining));
+                    } else {
+                        await AsyncStorage.removeItem(`outbox:${cidVal}`);
 					}
 				};
 				await drainOnce();
@@ -537,7 +549,8 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                                 const state = await NetInfo.fetch();
                                 const online = !(state.isConnected === false || state.isInternetReachable === false);
                                 if (!online) return;
-                                const raw = await AsyncStorage.getItem(`outbox:${cid}`);
+                                if (!cid) return;
+                                const raw = await AsyncStorage.getItem(`outbox:${String(cid)}`);
                                 const arr = raw ? JSON.parse(raw) : [];
                                 const now = Date.now();
                                 const ready = arr.filter((j: any) => !j.nextTryAt || j.nextTryAt <= now);
@@ -806,70 +819,39 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					>
 						<Text style={{ color: theme.colors.primary, fontSize: 18 }}>←</Text>
 					</TouchableOpacity>
-					<TouchableOpacity
-						style={{ flex: 1 }}
-						onPress={async () => {
-							try {
-								const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
-								if (ids.length) await ensureEmails(ids);
-							} catch {}
-							setParticipantsVisible(true);
-						}}
-						accessibilityLabel="Chat info"
-					>
+                    <TouchableOpacity
+                        style={{ flex: 1 }}
+                        onPress={async () => {
+                            try {
+                                const { ENABLE_ADD_TO_GROUP } = getFlags();
+                                if (!ENABLE_ADD_TO_GROUP) {
+                                    const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
+                                    if (ids.length) await ensureEmails(ids);
+                                    setParticipantsVisible(true);
+                                }
+                            } catch {}
+                        }}
+                        accessibilityLabel="Chat info"
+                    >
 						<View style={{ paddingVertical: 8 }}>
-							<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
 								<Text style={{ textAlign: 'center', fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>
 									{convName || (isGroup ? 'Group chat' : 'Chat')}
 								</Text>
-								<Text style={{ color: theme.colors.textSecondary }}>▾</Text>
 							</View>
 							{(() => { const { ENABLE_CHAT_UX } = getFlags(); const sub = ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined; return sub ? (
 								<Text style={{ textAlign: 'center', color: theme.colors.textSecondary, fontSize: 12 }} numberOfLines={1}>{sub}</Text>
 							) : null; })()}
 						</View>
 					</TouchableOpacity>
-						<TouchableOpacity
-							onPress={async () => {
-								try {
-									const me = await getCurrentUser();
-									const cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
-									if (!cid) return;
-									Alert.alert(
-										'Delete conversation?',
-										'This will delete the conversation for all users. This action cannot be undone.',
-										[
-											{ text: 'Cancel', style: 'cancel' },
-											{
-												text: 'Delete', style: 'destructive', onPress: async () => {
-													try {
-														await deleteConversationById(cid);
-														try { await AsyncStorage.removeItem(`history:${cid}`); } catch {}
-														try { subRef.current?.unsubscribe?.(); } catch {}
-														try { typingSubRef.current?.unsubscribe?.(); } catch {}
-														try { receiptsSubRef.current?.unsubscribe?.(); } catch {}
-														// Navigate back to list (for local deleter)
-														try {
-															if (navigation.canGoBack?.()) {
-																navigation.goBack?.();
-															} else {
-																navigation.navigate?.('Conversations');
-															}
-														} catch {}
-														try { showToast('Conversation deleted'); } catch {}
-													} catch (e) {
-														setError((e as any)?.message || 'Delete failed');
-													}
-												}
-											}
-										]
-									);
-								} catch {}
-							}}
-							style={{ paddingRight: 12 }}
-						>
-						<Text style={{ color: theme.colors.destructive, fontWeight: '600' }}>Delete</Text>
-						</TouchableOpacity>
+                        <TouchableOpacity
+                            accessibilityLabel="Menu"
+                            onPress={() => setMenuVisible(true)}
+                            style={{ paddingHorizontal: 12, paddingVertical: 8, minHeight: 44, justifyContent: 'center' }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                            <Text style={{ fontSize: 22, color: theme.colors.textPrimary }}>☰</Text>
+                        </TouchableOpacity>
 					</View>
 				</SafeAreaView>
 				{isTyping ? <Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>typing…</Text> : null}
@@ -991,36 +973,164 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				</View>
 			</Modal>
 
-			{/* Participants modal */}
-			<Modal visible={participantsVisible} transparent animationType="fade" onRequestClose={() => setParticipantsVisible(false)}>
-				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
-					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
-						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Active Participant list</Text>
-						{(() => {
-							const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
-							return ids.map((uid) => {
-								const email = userIdToEmail[uid];
-								const showSpinner = !email;
-								if (showSpinner) {
-									try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] awaiting email', uid); } catch {}
-								}
-								return (
-									<View key={uid} style={{ paddingVertical: 6, minHeight: 22, flexDirection: 'row', alignItems: 'center' }}>
-										{email ? (
-											<Text style={{ color: theme.colors.textPrimary }}>{email}</Text>
-										) : (
-											<ActivityIndicator size="small" color={theme.colors.muted} />
-										)}
-									</View>
-								);
-							});
-						})()}
-						<View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md }}>
-							<Button title="Close" onPress={() => setParticipantsVisible(false)} />
-						</View>
-					</View>
-				</View>
-			</Modal>
+            {/* Header menu modal */}
+            <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+                <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'flex-start', alignItems: 'flex-end' }}>
+                </View>
+                </TouchableWithoutFeedback>
+                <View pointerEvents="box-none" style={{ position: 'absolute', top: 64, right: 12 }}>
+                    <View style={{ marginTop: 64, marginRight: 12, backgroundColor: theme.colors.modal, padding: 8, borderRadius: theme.radii.md, borderWidth: 1, borderColor: theme.colors.border, minWidth: 200 }}>
+                        {(() => { try { const { ENABLE_ADD_TO_GROUP } = getFlags(); return ENABLE_ADD_TO_GROUP; } catch { return false; } })() ? (
+                        <TouchableOpacity
+                            onPress={() => { setMenuVisible(false); setAddError(null); setAddInput(''); setAddVisible(true); }}
+                            style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                            accessibilityLabel="Add participant"
+                        >
+                            <Text style={{ color: theme.colors.textPrimary }}>Add Participant</Text>
+                        </TouchableOpacity>
+                        ) : null}
+                        <TouchableOpacity
+                            onPress={async () => {
+                                setMenuVisible(false);
+                                try {
+                                    const me = await getCurrentUser();
+                                    const cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+                                    if (!cid) return;
+                                    Alert.alert(
+                                        'Delete conversation?',
+                                        'This will delete the conversation for all users. This action cannot be undone.',
+                                        [
+                                            { text: 'Cancel', style: 'cancel' },
+                                            {
+                                                text: 'Delete', style: 'destructive', onPress: async () => {
+                                                    try {
+                                                        await deleteConversationById(cid);
+                                                        try { await AsyncStorage.removeItem(`history:${cid}`); } catch {}
+                                                        try { subRef.current?.unsubscribe?.(); } catch {}
+                                                        try { typingSubRef.current?.unsubscribe?.(); } catch {}
+                                                        try { receiptsSubRef.current?.unsubscribe?.(); } catch {}
+                                                        try {
+                                                            if (navigation.canGoBack?.()) {
+                                                                navigation.goBack?.();
+                                                            } else {
+                                                                navigation.navigate?.('Conversations');
+                                                            }
+                                                        } catch {}
+                                                        try { showToast('Conversation deleted'); } catch {}
+                                                    } catch (e) {
+                                                        setError((e as any)?.message || 'Delete failed');
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    );
+                                } catch {}
+                            }}
+                            style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                            accessibilityLabel="Delete conversation"
+                        >
+                            <Text style={{ color: theme.colors.destructive }}>Delete Conversation</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Add participant modal (UID-only) */}
+            {(() => { try { const { ENABLE_ADD_TO_GROUP } = getFlags(); return ENABLE_ADD_TO_GROUP; } catch { return false; } })() ? (
+            <Modal visible={addVisible} transparent animationType="fade" onRequestClose={() => { if (!addBusy) setAddVisible(false); }}>
+                <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+                        <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Add participant</Text>
+                        <TextInput
+                            placeholder="Enter User ID"
+                            value={addInput}
+                            onChangeText={setAddInput}
+                            style={{ borderWidth: 1, padding: theme.spacing.sm, backgroundColor: theme.colors.inputBackground, borderColor: theme.colors.border, borderRadius: theme.radii.md }}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            returnKeyType="go"
+                            editable={!addBusy}
+                            onSubmitEditing={async () => {
+                                if (addBusy) return;
+                                try {
+                                    setAddBusy(true);
+                                    setAddError(null);
+                                    const uid = (addInput || '').trim();
+                                    if (!uid || !conversationId) { setAddError('Missing input'); setAddBusy(false); return; }
+                                    if (uid === 'assistant-bot' || uid.startsWith('assistant-')) { setAddError('Cannot add system user'); setAddBusy(false); return; }
+                                    const { ensureParticipant } = await import('../graphql/conversations');
+                                    await ensureParticipant(conversationId, uid, 'MEMBER');
+                                    try { showToast('Participant added'); } catch {}
+                                    setAddVisible(false);
+                                    setAddInput('');
+                                } catch (e) {
+                                    setAddError((e as any)?.message || 'Add failed');
+                                } finally {
+                                    setAddBusy(false);
+                                }
+                            }}
+                        />
+                        {addError ? <Text style={{ color: theme.colors.danger, marginTop: theme.spacing.sm }}>{addError}</Text> : null}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md, gap: theme.spacing.sm }}>
+                            <Button title={addBusy ? 'Adding…' : 'Add'} onPress={async () => {
+                                if (addBusy) return;
+                                try {
+                                    setAddBusy(true);
+                                    setAddError(null);
+                                    const uid = (addInput || '').trim();
+                                    if (!uid || !conversationId) { setAddError('Missing input'); setAddBusy(false); return; }
+                                    if (uid === 'assistant-bot' || uid.startsWith('assistant-')) { setAddError('Cannot add system user'); setAddBusy(false); return; }
+                                    const { ensureParticipant } = await import('../graphql/conversations');
+                                    await ensureParticipant(conversationId, uid, 'MEMBER');
+                                    try { showToast('Participant added'); } catch {}
+                                    setAddVisible(false);
+                                    setAddInput('');
+                                } catch (e) {
+                                    setAddError((e as any)?.message || 'Add failed');
+                                } finally {
+                                    setAddBusy(false);
+                                }
+                            }} />
+                            <Button title="Cancel" onPress={() => { if (!addBusy) setAddVisible(false); }} />
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            ) : null}
+
+            {/* Participants modal (disabled when add-to-group enabled) */}
+            {(() => { try { const { ENABLE_ADD_TO_GROUP } = getFlags(); return !ENABLE_ADD_TO_GROUP; } catch { return true; } })() ? (
+            <Modal visible={participantsVisible} transparent animationType="fade" onRequestClose={() => setParticipantsVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+                        <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Active Participant list</Text>
+                        {(() => {
+                            const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
+                            return ids.map((uid) => {
+                                const email = userIdToEmail[uid];
+                                const showSpinner = !email;
+                                if (showSpinner) {
+                                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] awaiting email', uid); } catch {}
+                                }
+                                return (
+                                    <View key={uid} style={{ paddingVertical: 6, minHeight: 22, flexDirection: 'row', alignItems: 'center' }}>
+                                        {email ? (
+                                            <Text style={{ color: theme.colors.textPrimary }}>{email}</Text>
+                                        ) : (
+                                            <ActivityIndicator size="small" color={theme.colors.muted} />
+                                        )}
+                                    </View>
+                                );
+                            });
+                        })()}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md }}>
+                            <Button title="Close" onPress={() => setParticipantsVisible(false)} />
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            ) : null}
 			{/* Recipes modal */}
 			<Modal visible={recipesVisible} transparent animationType="fade" onRequestClose={() => setRecipesVisible(false)}>
 				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>

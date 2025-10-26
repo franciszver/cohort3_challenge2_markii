@@ -6,6 +6,7 @@ type Flags = {
   ENABLE_PROFILES: boolean;
   ENABLE_CONVERSATION_LIST_UX: boolean;
   ENABLE_CHAT_UX: boolean;
+  ENABLE_ADD_TO_GROUP: boolean;
   ENABLE_UNREAD_BADGE: boolean;
   ENABLE_AUTH_UX: boolean;
   ENABLE_NOTIFICATIONS_UX: boolean;
@@ -47,6 +48,7 @@ export function getFlags(): Flags {
     ENABLE_PROFILES: toBool(extra.ENABLE_PROFILES, false),
     ENABLE_CONVERSATION_LIST_UX: toBool(extra.ENABLE_CONVERSATION_LIST_UX, false),
     ENABLE_CHAT_UX: toBool(extra.ENABLE_CHAT_UX, false),
+    ENABLE_ADD_TO_GROUP: toBool(extra.ENABLE_ADD_TO_GROUP, false),
     ENABLE_UNREAD_BADGE: toBool(extra.ENABLE_UNREAD_BADGE, false),
     ENABLE_AUTH_UX: toBool(extra.ENABLE_AUTH_UX, false),
     ENABLE_NOTIFICATIONS_UX: toBool(extra.ENABLE_NOTIFICATIONS_UX, false),
