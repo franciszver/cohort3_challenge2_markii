@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
-import { updateLastSeen, subscribeUserPresence, batchGetUsersCached, getEmailCacheSnapshot } from '../graphql/users';
+import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
 import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, getConversation, updateConversationName } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
@@ -17,9 +17,8 @@ import { mergeDedupSort } from '../utils/messages';
 import { generateLocalId } from '../utils/ids';
 import { getFlags } from '../utils/flags';
 import Constants from 'expo-constants';
-import { getUserProfile } from '../graphql/profile';
-import Avatar from '../components/Avatar';
 import { useTheme } from '../utils/theme';
+import { preloadNicknames, setNickname as setNicknameUtil, getAllNicknames } from '../utils/nicknames';
 
 function conversationIdFor(a: string, b: string) {
 	return [a, b].sort().join('#');
@@ -28,7 +27,6 @@ function conversationIdFor(a: string, b: string) {
 export default function ChatScreen({ route, navigation }: any) {
 	const theme = useTheme();
 	const [messages, setMessages] = useState<any[]>([]);
-	const [userIdToEmail, setUserIdToEmail] = useState<Record<string, string>>({});
 	const [myEmail, setMyEmail] = useState<string>('');
 	const [convName, setConvName] = useState<string>('');
 	const [isGroup, setIsGroup] = useState<boolean>(false);
@@ -90,34 +88,21 @@ const [recipesItems, setRecipesItems] = useState<any[]>([]);
 // Decisions modal state
 const [decisionsVisible, setDecisionsVisible] = useState(false);
 const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
+// Nickname modal state
+const [nicknameVisible, setNicknameVisible] = useState(false);
+const [nicknameInput, setNicknameInput] = useState('');
+const [nicknameTargetId, setNicknameTargetId] = useState<string | null>(null);
+const [nicknames, setNicknames] = useState<Record<string, string>>({});
 
-	// Ensure emails for a set of user ids using multiple sources
-	async function ensureEmails(userIds: string[]) {
+	// Load nicknames from AsyncStorage
+	async function loadNicknames() {
 		try {
-			const ids = Array.from(new Set((userIds || []).filter(Boolean)));
-			const missing = ids.filter(id => !userIdToEmail[id]);
-			if (!missing.length) return;
-			// First: Users table (batch)
-			let map: Record<string, string> = {};
-			try {
-				const usersMap = await batchGetUsersCached(missing);
-				for (const uid of Object.keys(usersMap || {})) {
-					const u = (usersMap as any)[uid];
-					if (u?.email) map[uid] = u.email;
-				}
-			} catch {}
-			// Second: Profiles table (per id)
-			for (const uid of missing) {
-				if (map[uid]) continue;
-				try {
-					const r:any = await getUserProfile(uid);
-					const p = r?.data?.getUserProfile;
-					const email = p?.email;
-					if (email) map[uid] = email;
-				} catch {}
-			}
-			if (Object.keys(map).length) setUserIdToEmail(prev => ({ ...prev, ...map }));
-		} catch {}
+			await preloadNicknames();
+			const allNicknames = await import('../utils/nicknames').then(m => m.getAllNicknames());
+			setNicknames(await allNicknames);
+		} catch (e) {
+			console.warn('[chat] Failed to load nicknames:', e);
+		}
 	}
 
 	// Debounced lastRead setter
@@ -132,6 +117,8 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			let cid: string | undefined;
 			let otherId: string | undefined;
 			try {
+				// Load nicknames early
+				await loadNicknames();
                 const me = await getCurrentUser();
                 setMyId(me.userId);
                 // Resolve my email from Cognito ID token, fallbacks to username/loginId and cache
@@ -201,16 +188,6 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 							} catch {}
 							return next;
 						});
-                        // Update email map for sender on the fly (metadata only, no lookups)
-                        try {
-                            const sid = m?.senderId;
-                            // Prefer metadata.email when present
-                            try {
-                                const metaAny = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
-                                const em = (metaAny && typeof metaAny.email === 'string') ? metaAny.email.trim() : '';
-                                if (sid && em && !userIdToEmail[sid]) setUserIdToEmail(prev => ({ ...prev, [sid]: em }));
-                            } catch {}
-                        } catch {}
                         // Calendar CTA (flag-gated) — if metadata missing in sub payload, refetch message once to get metadata
 						try {
 							const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
@@ -409,18 +386,6 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				}
                 // Optional backfill disabled for simplicity; first page is sufficient for visibility
 				setNextToken(res.nextToken);
-                // Build user email map by harvesting metadata.email from fetched items
-                try {
-                    const metaMap: Record<string, string> = {};
-                    for (const it of items) {
-                        try {
-                            const meta = (() => { try { return typeof it.metadata === 'string' ? JSON.parse(it.metadata) : (it.metadata || {}); } catch { return {}; } })();
-                            const em = (meta && typeof meta.email === 'string') ? meta.email.trim() : '';
-                            if (it.senderId && em) metaMap[it.senderId] = em;
-                        } catch {}
-                    }
-                    if (Object.keys(metaMap).length) setUserIdToEmail(prev => ({ ...prev, ...metaMap }));
-                } catch {}
                 // Compute active participants from latest 50 messages
                 try {
                     const latest = (items || []).slice(0, 50);
@@ -664,8 +629,6 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 								}
 							}
 						} catch {}
-								// Ensure emails for any senders in this latest page
-								try { await ensureEmails(newer.map((m:any)=>m.senderId).filter(Boolean)); } catch {}
 							} catch {}
 							finally { latestRefreshInFlightRef.current = false; }
 						}
@@ -877,8 +840,6 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                             try {
                                 const { ENABLE_ADD_TO_GROUP } = getFlags();
                                 if (!ENABLE_ADD_TO_GROUP) {
-                                    const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
-                                    if (ids.length) await ensureEmails(ids);
                                     setParticipantsVisible(true);
                                 }
                             } catch {}
@@ -995,7 +956,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 									setInfoVisible(true);
 								}
 								}}>
-                                <View style={[{ maxWidth: '88%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }, item.senderId !== myId ? { marginLeft: 'auto' } : null ]}>
+                                <View style={[{ maxWidth: '95%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }, item.senderId !== myId ? { marginLeft: 'auto' } : null ]}>
 								<Text style={{ color: theme.colors.textPrimary }}>
 									{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
 									{item.__status ? ' ' : ''}
@@ -1005,17 +966,32 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 								</Text>
                                             {(() => {
                                                 const isMe = item.senderId === myId;
-                                                const label = isMe ? 'you' : (userIdToEmail[item.senderId] || '');
+                                                const displayName = isMe ? 'you' : (nicknames[item.senderId] || item.senderId);
                                                 const edited = item.editedAt ? ' · edited' : '';
-                                                const suffix = label ? ` · ${label}` : '';
                                                 const isMultiUser = participantIds.length > 2;
                                                 const isAiMention = /^@ai\b/i.test(String(item.content || ''));
                                                 const showAiBadge = isMultiUser && isAiMention;
                                                 const aiBadge = showAiBadge ? ' → AI' : '';
                                                 return (
-                                                    <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }} numberOfLines={1}>
-                                                        {formatTimestamp(item.createdAt)}{edited}{suffix}{aiBadge}
-                                                    </Text>
+                                                    <View style={{ marginTop: 6 }}>
+                                                        <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>
+                                                            {formatTimestamp(item.createdAt)}{edited}{aiBadge}
+                                                        </Text>
+                                                        <TouchableOpacity 
+                                                            onLongPress={() => {
+                                                                if (!isMe && item.senderId) {
+                                                                    setNicknameTargetId(item.senderId);
+                                                                    setNicknameInput(nicknames[item.senderId] || '');
+                                                                    setNicknameVisible(true);
+                                                                }
+                                                            }}
+                                                            activeOpacity={isMe ? 1.0 : 0.6}
+                                                        >
+                                                            <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>
+                                                                {displayName}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    </View>
                                                 );
                                             })()}
 							</View>
@@ -1254,23 +1230,30 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
             <Modal visible={participantsVisible} transparent animationType="fade" onRequestClose={() => setParticipantsVisible(false)}>
                 <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
                     <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
-                        <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Active Participant list</Text>
+                        <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Active Participants</Text>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: theme.spacing.md }}>Long-press to set nickname</Text>
                         {(() => {
                             const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
                             return ids.map((uid) => {
-                                const email = userIdToEmail[uid];
-                                const showSpinner = !email;
-                                if (showSpinner) {
-                                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] awaiting email', uid); } catch {}
-                                }
+                                const isMe = uid === myId;
+                                const displayName = isMe ? 'You' : (nicknames[uid] || uid);
                                 return (
-                                    <View key={uid} style={{ paddingVertical: 6, minHeight: 22, flexDirection: 'row', alignItems: 'center' }}>
-                                        {email ? (
-                                            <Text style={{ color: theme.colors.textPrimary }}>{email}</Text>
-                                        ) : (
-                                            <ActivityIndicator size="small" color={theme.colors.muted} />
-                                        )}
-                                    </View>
+                                    <TouchableOpacity 
+                                        key={uid} 
+                                        style={{ paddingVertical: 8, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                                        onLongPress={() => {
+                                            if (!isMe) {
+                                                setNicknameTargetId(uid);
+                                                setNicknameInput(nicknames[uid] || '');
+                                                setParticipantsVisible(false);
+                                                setNicknameVisible(true);
+                                            }
+                                        }}
+                                        activeOpacity={isMe ? 1.0 : 0.6}
+                                    >
+                                        <Text style={{ color: theme.colors.textPrimary, flex: 1 }} numberOfLines={1}>{displayName}</Text>
+                                        {!isMe && <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>Hold to edit</Text>}
+                                    </TouchableOpacity>
                                 );
                             });
                         })()}
@@ -1361,6 +1344,63 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                     </View>
                 </View>
             </Modal>
+			{/* Nickname editor modal */}
+			<Modal visible={nicknameVisible} transparent animationType="fade" onRequestClose={() => setNicknameVisible(false)}>
+				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Set Nickname</Text>
+						<Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: theme.spacing.sm }}>For user: {nicknameTargetId}</Text>
+						<TextInput
+							placeholder="Enter nickname (leave empty to clear)"
+							value={nicknameInput}
+							onChangeText={setNicknameInput}
+							style={{ borderWidth: 1, padding: theme.spacing.sm, backgroundColor: theme.colors.inputBackground, borderColor: theme.colors.border, borderRadius: theme.radii.md, color: theme.colors.textPrimary, marginBottom: theme.spacing.md }}
+							autoCapitalize="words"
+							autoCorrect={false}
+							returnKeyType="done"
+							onSubmitEditing={async () => {
+								if (!nicknameTargetId) return;
+								try {
+									await setNicknameUtil(nicknameTargetId, nicknameInput.trim());
+									await loadNicknames();
+									setNicknameVisible(false);
+									showToast(nicknameInput.trim() ? 'Nickname saved' : 'Nickname cleared');
+								} catch (e) {
+									console.warn('[nickname] Save failed:', e);
+									showToast('Failed to save nickname');
+								}
+							}}
+						/>
+						<View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.sm }}>
+							<Button title="Clear" onPress={async () => {
+								if (!nicknameTargetId) return;
+								try {
+									await setNicknameUtil(nicknameTargetId, '');
+									await loadNicknames();
+									setNicknameVisible(false);
+									showToast('Nickname cleared');
+								} catch (e) {
+									console.warn('[nickname] Clear failed:', e);
+									showToast('Failed to clear nickname');
+								}
+							}} />
+							<Button title="Save" onPress={async () => {
+								if (!nicknameTargetId) return;
+								try {
+									await setNicknameUtil(nicknameTargetId, nicknameInput.trim());
+									await loadNicknames();
+									setNicknameVisible(false);
+									showToast(nicknameInput.trim() ? 'Nickname saved' : 'Nickname cleared');
+								} catch (e) {
+									console.warn('[nickname] Save failed:', e);
+									showToast('Failed to save nickname');
+								}
+							}} />
+							<Button title="Cancel" onPress={() => setNicknameVisible(false)} />
+						</View>
+					</View>
+				</View>
+			</Modal>
 			{error ? <Text style={{ color: theme.colors.danger }}>{error}</Text> : null}
 			<View style={{ flexDirection: 'row', padding: theme.spacing.sm, gap: theme.spacing.sm, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
 				<TextInput

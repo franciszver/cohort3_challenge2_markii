@@ -5,8 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
 import { listConversationsForUser, getConversation, listParticipantsForConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead, createConversation } from '../graphql/conversations';
-import { batchGetUsersCached, getUserById, seedUserEmailCache } from '../graphql/users';
-import { batchGetProfilesCached } from '../graphql/profile';
+import { getUserById } from '../graphql/users';
 import { getLatestMessageInConversation } from '../graphql/messages';
 import { formatTimestamp } from '../utils/time';
 import { useFocusEffect } from '@react-navigation/native';
@@ -18,6 +17,7 @@ import { debounce } from '../utils/debounce';
 import { subscribeToasts, showToast } from '../utils/toast';
 import { getUserProfile, updateUserProfile, invalidateProfileCache } from '../graphql/profile';
 import { useTheme } from '../utils/theme';
+import { preloadNicknames, getAllNicknames } from '../utils/nicknames';
 
 export default function ConversationListScreen({ route, navigation }: any) {
   const [titleFontsLoaded] = useFonts({ DancingScript_700Bold });
@@ -41,6 +41,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
   const [meSaving, setMeSaving] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [nicknames, setNicknames] = useState<Record<string, string>>({});
   // debug logs removed
 
   async function openProfile() {
@@ -111,6 +112,14 @@ export default function ConversationListScreen({ route, navigation }: any) {
       if (!force && now - lastLoadedAtRef.current < 1500) return; // staleness guard
       isLoadingRef.current = true;
       setError(null);
+      // Load nicknames early
+      try {
+        await preloadNicknames();
+        const allNicknames = await getAllNicknames();
+        setNicknames(allNicknames);
+      } catch (e) {
+        console.warn('[list] Failed to load nicknames:', e);
+      }
       const me = await getCurrentUser();
       setMyId(me.userId);
       // Header actions and theming
@@ -262,31 +271,16 @@ export default function ConversationListScreen({ route, navigation }: any) {
               return lc > lt ? latestLocal : latest;
             } catch { return latest || latestLocal; }
           })();
-          // fetch participant subset (first 3 for avatars)
+          // fetch participant subset (first 3)
           const partsRes: any = await listParticipantsForConversation(c.id, 3);
           const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-          const userIds = parts.map((p: any) => p.userId);
-          const userMap = await batchGetUsersCached(userIds);
-          try {
-            const snapshot: Record<string, string> = {};
-            for (const uid of Object.keys(userMap || {})) {
-              const u = (userMap as any)[uid];
-              if (u?.email) snapshot[uid] = u.email;
-            }
-            if (Object.keys(snapshot).length) seedUserEmailCache(snapshot);
-          } catch {}
-          let profileMap: Record<string, any> | null = null;
-          try {
-            const { ENABLE_PROFILES } = getFlags();
-            if (ENABLE_PROFILES) profileMap = await batchGetProfilesCached(parts.map((p: any) => p.userId));
-          } catch {}
           // compute unread from myLastRead map; if latestFinal newer than lastRead, unread
           let unread = 0;
           const lastRead = myLastRead[c.id];
           const latestTs = latestFinal?.createdAt ? new Date(latestFinal.createdAt).getTime() : 0;
           const lastReadTs = lastRead ? new Date(lastRead).getTime() : 0;
           unread = latestTs > lastReadTs ? 1 : 0;
-          convs.push({ ...c, _latest: latestFinal, _participants: parts, _users: userMap, _profiles: profileMap || {}, _unread: unread });
+          convs.push({ ...c, _latest: latestFinal, _participants: parts, _unread: unread });
         }
       }
       // Sort by latest activity (latest message createdAt desc)
@@ -371,8 +365,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
               const latest = await getLatestMessageInConversation(conv.id);
               const partsRes: any = await listParticipantsForConversation(conv.id, 3);
               const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-              const userMap = await batchGetUsersCached(parts.map((x: any) => x.userId));
-              setItems(prev => [{ ...conv, _latest: latest, _participants: parts, _users: userMap, _unread: 1 }, ...prev.filter(c => c.id !== conv.id)]);
+              setItems(prev => [{ ...conv, _latest: latest, _participants: parts, _unread: 1 }, ...prev.filter(c => c.id !== conv.id)]);
             } catch {}
           },
           error: () => {},
@@ -407,21 +400,23 @@ export default function ConversationListScreen({ route, navigation }: any) {
     } catch {}
   }
 
-  // Debounced search filter (kept but not rendered)
+  // Debounced search filter
   const applyFilter = useMemo(() => debounce((q: string) => {
     const term = (q || '').trim().toLowerCase();
     if (!term) { setItems(allItems); return; }
     const filtered = allItems.filter((c: any) => {
       const name = (c.name || '').toLowerCase();
       const latest = (c._latest?.content || '').toLowerCase();
-      const users = Object.values(c._users || {}) as any[];
-      const profiles = Object.values(c._profiles || {}) as any[];
-      const userText = users.map(u => `${u.displayName||''} ${u.email||''} ${u.username||''}`.toLowerCase()).join(' ');
-      const profileText = profiles.map((p:any)=> `${p.firstName||''} ${p.lastName||''} ${p.email||''}`.toLowerCase()).join(' ');
-      return name.includes(term) || latest.includes(term) || userText.includes(term) || profileText.includes(term);
+      // Search by nicknames and userIds
+      const participantText = (c._participants || []).map((p: any) => {
+        const uid = p.userId || '';
+        const nickname = nicknames[uid] || '';
+        return `${nickname} ${uid}`.toLowerCase();
+      }).join(' ');
+      return name.includes(term) || latest.includes(term) || participantText.includes(term);
     });
     setItems(filtered);
-  }, 200, { trailing: true }), [allItems]);
+  }, 200, { trailing: true }), [allItems, nicknames]);
 
   useEffect(() => { if (ENABLE_CONVERSATION_LIST_UX) applyFilter(query); }, [query, allItems, ENABLE_CONVERSATION_LIST_UX, applyFilter]);
 
@@ -515,82 +510,40 @@ export default function ConversationListScreen({ route, navigation }: any) {
         renderItem={({ item }) => (
           <TouchableOpacity onPress={() => { setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; }); try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[nav:openChat]', { conversationId: item.id }); } catch {}; navigation.navigate('Chat', { conversationId: item.id }); }}>
             <View style={{ paddingVertical: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 8, minHeight: 64 }}>
-          {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
-            <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.border }}>
-                <Text style={{ fontSize: 10, color: theme.colors.textPrimary }}>
-                  {(() => {
-                    const uid = item._participants?.[0]?.userId;
-                    const p = uid ? item._profiles?.[uid] : null;
-                    const u = uid ? item._users?.[uid] : null;
-                    const email = (p?.email || u?.email || '');
-                    const local = email ? email.split('@')[0] : (u?.username || 'U1');
-                    return local.length > 4 ? local.slice(0,4) : local;
-                  })()}
-                </Text>
-              </View>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.inputBackground }}>
-                <Text style={{ fontSize: 10, color: theme.colors.textPrimary }}>
-                  {(() => {
-                    const uid = item._participants?.[1]?.userId;
-                    const p = uid ? item._profiles?.[uid] : null;
-                    const u = uid ? item._users?.[uid] : null;
-                    const email = (p?.email || u?.email || '');
-                    const local = email ? email.split('@')[0] : (u?.username || 'U2');
-                    return local.length > 4 ? local.slice(0,4) : local;
-                  })()}
-                </Text>
-              </View>
+          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.border, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>
+                {(() => {
+                  const uid = item._participants?.[0]?.userId;
+                  const displayName = uid ? (nicknames[uid] || uid) : 'U1';
+                  return displayName.slice(0, 4);
+                })()}
+              </Text>
             </View>
-          ) : (
-            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.border, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>
-                  {(() => {
-                    const uid = item._participants?.[0]?.userId;
-                    const u = uid ? item._users?.[uid] : null;
-                    const email = u?.email || '';
-                    const local = email ? email.split('@')[0] : (u?.username || 'U1');
-                    return local.length > 4 ? local.slice(0,4) : local;
-                  })()}
-                </Text>
-              </View>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.inputBackground }}>
-                <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>
-                  {(() => {
-                    const uid = item._participants?.[1]?.userId;
-                    const u = uid ? item._users?.[uid] : null;
-                    const email = u?.email || '';
-                    const local = email ? email.split('@')[0] : (u?.username || 'U2');
-                    return local.length > 4 ? local.slice(0,4) : local;
-                  })()}
-                </Text>
-              </View>
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.inputBackground }}>
+              <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>
+                {(() => {
+                  const uid = item._participants?.[1]?.userId;
+                  const displayName = uid ? (nicknames[uid] || uid) : 'U2';
+                  return displayName.slice(0, 4);
+                })()}
+              </Text>
             </View>
-          )}
+          </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontWeight: item._unread ? '700' : '600', color: theme.colors.textPrimary }}>
               {(() => {
-                const { ENABLE_PROFILES } = getFlags();
-                  if (item.name) return item.name;
-                  if (item.isGroup) {
-                    const initials = (item._participants || []).slice(0, 3).map((p:any) => {
-                      if (ENABLE_PROFILES) {
-                        const prof = item._profiles?.[p.userId];
-                        if (prof && (prof.firstName || prof.lastName)) return `${prof.firstName||''} ${prof.lastName||''}`.trim();
-                      }
-                      const u = item._users?.[p.userId];
-                      return (u?.displayName || u?.email || u?.username || 'User').split('@')[0];
-                    }).filter(Boolean).join(', ');
-                    return initials || 'Group';
-                  }
-                const first = item._participants?.find((p:any)=>p?.userId && p.userId !== myId) || item._participants?.[0];
-                if (ENABLE_PROFILES) {
-                  const p = first ? item._profiles?.[first.userId] : null;
-                  if (p && (p.firstName || p.lastName)) return `${p.firstName||''} ${p.lastName||''}`.trim();
+                if (item.name) return item.name;
+                if (item.isGroup) {
+                  const names = (item._participants || []).slice(0, 3).map((p:any) => {
+                    const uid = p.userId;
+                    return nicknames[uid] || uid;
+                  }).filter(Boolean).join(', ');
+                  return names || 'Group';
                 }
-                const u = first ? item._users?.[first.userId] : null;
-                return (u?.displayName || u?.email || 'Chat');
+                const first = item._participants?.find((p:any)=>p?.userId && p.userId !== myId) || item._participants?.[0];
+                const uid = first?.userId;
+                return uid ? (nicknames[uid] || uid) : 'Chat';
               })()}
             </Text>
             <Text style={{ color: theme.colors.textSecondary, fontWeight: item._unread ? '600' : '400' }} numberOfLines={1}>
