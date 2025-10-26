@@ -185,6 +185,55 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 								}
 							}
 						} catch {}
+                        // Decisions CTA enrichment (flag-gated)
+                        try {
+                            const { ASSISTANT_DECISIONS_ENABLED } = getFlags();
+                            if (ASSISTANT_DECISIONS_ENABLED && m?.senderId === 'assistant-bot') {
+                                let metaAny = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
+                                let decs: any[] = Array.isArray((metaAny as any)?.decisions) ? (metaAny as any).decisions : [];
+                                if (!decs.length) {
+                                    // Retry fetch to allow backend metadata updates
+                                    for (let i = 0; i < 5 && !(decs && decs.length); i++) {
+                                        try {
+                                            const full = await getMessageById(m.id);
+                                            const meta2 = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
+                                            if (Array.isArray((meta2 as any)?.decisions) && (meta2 as any).decisions.length) {
+                                                metaAny = meta2;
+                                                decs = (meta2 as any).decisions;
+                                                break;
+                                            }
+                                        } catch {}
+                                        const delay = 250 + i*300;
+                                        await new Promise(r => setTimeout(r, delay));
+                                    }
+                                }
+                                if (!(decs && decs.length) && Array.isArray((m as any).attachments)) {
+                                    try {
+                                        const hit = (m as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('decisions:'));
+                                        if (hit) {
+                                            const payload = hit.slice('decisions:'.length);
+                                            try { const obj = JSON.parse(payload); if (Array.isArray(obj?.decisions) && obj.decisions.length) decs = obj.decisions; } catch {}
+                                        }
+                                    } catch {}
+                                }
+                                if (!(decs && decs.length)) {
+                                    // Final UI-only fallback: infer a single decision from assistant content
+                                    try {
+                                        const txt = String(m.content || '');
+                                        if (/\bwe\s+decided\b|\bdecided\s+to\b|\blet'?s\s+go\s+with\b|\bagreed\b|\bsettled\s+on\b/i.test(txt)) {
+                                            decs = [{ title: txt.slice(0, 60), summary: txt.slice(0, 200), participants: [myId], decidedAtISO: m.createdAt }];
+                                        }
+                                    } catch {}
+                                }
+                                if (decs && decs.length) {
+                                    // Decorate message locally so render sees metadata.decisions
+                                    try {
+                                        const decorated = { ...m, metadata: JSON.stringify({ ...(metaAny||{}), decisions: decs }) } as any;
+                                        setMessages(prev => mergeDedupSort(prev, [decorated]));
+                                    } catch {}
+                                }
+                            }
+                        } catch {}
                         try { if (m?.senderId === 'assistant-bot') setAssistantPending(false); } catch {}
 						try { await markDelivered(m.id, me.userId); } catch {}
 						if (m.senderId !== me.userId) {

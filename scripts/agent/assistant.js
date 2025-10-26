@@ -213,10 +213,9 @@ function extractDecisionsFromRecent(recent, currentUserId) {
         const sid = items[j]?.senderId;
         if (sid && sid !== 'assistant-bot') participantsSet.add(sid);
       }
-      const participants = Array.from(participantsSet);
-      if (participants.length) {
-        hits.push({ title, summary, participants, decidedAtISO });
-      }
+      let participants = Array.from(participantsSet);
+      if (!participants.length && currentUserId) participants = [currentUserId];
+      hits.push({ title, summary, participants, decidedAtISO });
       if (hits.length >= 3) break;
     }
     return hits;
@@ -640,11 +639,15 @@ exports.handler = async (event) => {
     try { recent = await getRecentMessages(conversationId, 10, jwt); } catch (e) { console.warn('[assistant] getRecentMessages failed:', e?.message || e); }
     const lastUserMessage = (recent || []).find((m) => m?.senderId === userId)?.content || text || '';
 
-    // Precompute decisions once (flag-gated)
+    // Precompute decisions once (flag-gated). Include current text to avoid eventual consistency gaps.
     let decisionsMetaGlobal = undefined; let decisionsAttachGlobal = undefined;
     if (ASSISTANT_DECISIONS_ENABLED) {
       try {
-        const decisions = extractDecisionsFromRecent(recent, userId);
+        const scan = Array.isArray(recent) ? recent.slice() : [];
+        if (text && typeof text === 'string' && text.trim()) {
+          scan.unshift({ content: String(text), senderId: userId, createdAt: new Date().toISOString() });
+        }
+        const decisions = extractDecisionsFromRecent(scan, userId);
         const count = Array.isArray(decisions) ? decisions.length : 0;
         try { logMetric('decisions_extracted', count); } catch {}
         if (count) {
@@ -948,14 +951,15 @@ exports.handler = async (event) => {
               }
               const content = `${ASSISTANT_REPLY_PREFIX} ${modelText}`.trim();
               // Optional: decision extraction on assistant replies
-              let decisionsMeta = undefined;
-              let decisionsAttach = undefined;
-              if (ASSISTANT_DECISIONS_ENABLED) {
+              let decisionsMeta = decisionsMetaGlobal;
+              let decisionsAttach = decisionsAttachGlobal;
+              if (!decisionsMeta && ASSISTANT_DECISIONS_ENABLED) {
                 try {
-                  const decisions = extractDecisionsFromRecent(recent, userId);
-                  if (Array.isArray(decisions) && decisions.length) {
-                    decisionsMeta = { decisions };
-                    try { decisionsAttach = 'decisions:' + JSON.stringify({ decisions }); } catch {}
+                  const scan = [{ content: modelText, senderId: ASSISTANT_BOT_USER_ID, createdAt: new Date().toISOString() }, ...(Array.isArray(recent) ? recent : [])];
+                  const decisions2 = extractDecisionsFromRecent(scan, userId);
+                  if (Array.isArray(decisions2) && decisions2.length) {
+                    decisionsMeta = { decisions: decisions2 };
+                    try { decisionsAttach = 'decisions:' + JSON.stringify({ decisions: decisions2 }); } catch {}
                   }
                 } catch {}
               }
