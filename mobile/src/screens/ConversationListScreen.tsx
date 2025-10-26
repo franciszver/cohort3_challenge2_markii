@@ -437,7 +437,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
       {null}
       {error ? (
         <View style={{ paddingVertical: 12 }}>
-          <Text style={{ color: 'red', marginBottom: 8 }}>{error}</Text>
+          <Text style={{ color: theme.colors.danger, marginBottom: 8 }}>{error}</Text>
           <Button title="Retry" onPress={() => { setError(null); setIsInitialLoading(true); load(true); }} />
         </View>
       ) : null}
@@ -445,10 +445,10 @@ export default function ConversationListScreen({ route, navigation }: any) {
         <View>
           {Array.from({ length: 10 }).map((_, i) => (
             <View key={i} style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8 }} />
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.border, marginRight: 8 }} />
               <View style={{ flex: 1 }}>
-                <View style={{ height: 12, backgroundColor: '#e5e7eb', borderRadius: 6, width: '40%', marginBottom: 6 }} />
-                <View style={{ height: 10, backgroundColor: '#f3f4f6', borderRadius: 5, width: '70%' }} />
+                <View style={{ height: 12, backgroundColor: theme.colors.border, borderRadius: 6, width: '40%', marginBottom: 6 }} />
+                <View style={{ height: 10, backgroundColor: theme.colors.inputBackground, borderRadius: 5, width: '70%' }} />
               </View>
               <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: 'transparent' }} />
             </View>
@@ -460,13 +460,13 @@ export default function ConversationListScreen({ route, navigation }: any) {
           {query.trim() ? (
             <>
               <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 6 }}>No results</Text>
-              <Text style={{ color: '#6b7280', marginBottom: 12 }}>No chats match "{query}". Try a different term.</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>No chats match "{query}". Try a different term.</Text>
               <Button title="Clear search" onPress={() => setQuery('') } />
             </>
           ) : (
             <>
               <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 6 }}>Start a chat</Text>
-              <Text style={{ color: '#6b7280', marginBottom: 12 }}>You don’t have any conversations yet.</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>You don’t have any conversations yet.</Text>
             </>
           )}
         </View>
@@ -484,11 +484,11 @@ export default function ConversationListScreen({ route, navigation }: any) {
         ) : undefined; } catch { return undefined; } })()}
         renderItem={({ item }) => (
           <TouchableOpacity onPress={() => { setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; }); navigation.navigate('Chat', { conversationId: item.id }); }}>
-            <View style={{ paddingVertical: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 8, minHeight: 64 }}>
+            <View style={{ paddingVertical: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 8, minHeight: 64 }}>
           {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
             <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e5e7eb' }}>
-                <Text style={{ fontSize: 10, color: '#111827' }}>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.border }}>
+                <Text style={{ fontSize: 10, color: theme.colors.textPrimary }}>
                   {(() => {
                     const uid = item._participants?.[0]?.userId;
                     const p = uid ? item._profiles?.[uid] : null;
@@ -499,8 +499,8 @@ export default function ConversationListScreen({ route, navigation }: any) {
                   })()}
                 </Text>
               </View>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
-                <Text style={{ fontSize: 10, color: '#111827' }}>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.inputBackground }}>
+                <Text style={{ fontSize: 10, color: theme.colors.textPrimary }}>
                   {(() => {
                     const uid = item._participants?.[1]?.userId;
                     const p = uid ? item._profiles?.[uid] : null;
@@ -513,9 +513,9 @@ export default function ConversationListScreen({ route, navigation }: any) {
               </View>
             </View>
           ) : (
-            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
+            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.border, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 10, color: '#374151' }}>
+                <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>
                   {(() => {
                     const uid = item._participants?.[0]?.userId;
                     const u = uid ? item._users?.[uid] : null;
@@ -525,8 +525,8 @@ export default function ConversationListScreen({ route, navigation }: any) {
                   })()}
                 </Text>
               </View>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
-                <Text style={{ fontSize: 10, color: '#374151' }}>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.inputBackground }}>
+                <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>
                   {(() => {
                     const uid = item._participants?.[1]?.userId;
                     const u = uid ? item._users?.[uid] : null;
@@ -583,21 +583,21 @@ export default function ConversationListScreen({ route, navigation }: any) {
           }}
           style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 10 }}
         >
-          <View style={{ backgroundColor: '#111827', padding: 12, borderRadius: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8 }}>
-            <Text style={{ color: 'white', fontWeight: '600' }}>New message</Text>
-            <Text numberOfLines={1} style={{ color: '#d1d5db' }}>{banner.preview}</Text>
+          <View style={{ backgroundColor: theme.colors.surface, padding: theme.spacing.md, borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8 }}>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>New message</Text>
+            <Text numberOfLines={1} style={{ color: theme.colors.textSecondary }}>{banner.preview}</Text>
           </View>
         </TouchableOpacity>
       ) : null}
       {/* Hamburger menu modal */}
       <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
-        <TouchableOpacity activeOpacity={1} onPress={() => setShowMenu(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.1)' }}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setShowMenu(false)} style={{ flex: 1, backgroundColor: theme.colors.overlay }}>
           <View style={{ position: 'absolute', top: 56, right: 12, backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 12, padding: 8, minWidth: 220, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } }}>
             <TouchableOpacity accessibilityRole="button" onPress={() => { setShowMenu(false); setShowId(true); }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F2EFEA', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.buttonPrimaryBg, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 12 }}>ID</Text>
               </View>
               <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>My ID</Text>
@@ -609,7 +609,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F2EFEA', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                  <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.buttonPrimaryBg, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                     <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 12 }}>👤</Text>
                   </View>
                   <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Profile</Text>
@@ -621,7 +621,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F2EFEA', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.buttonPrimaryBg, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 12 }}>⎋</Text>
               </View>
               <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sign Out</Text>
@@ -630,10 +630,10 @@ export default function ConversationListScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </Modal>
       <Modal visible={showId} transparent animationType="fade" onRequestClose={() => setShowId(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Your ID</Text>
-            <Text selectable style={{ marginBottom: 12 }}>{myId}</Text>
+        <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Your ID</Text>
+            <Text selectable style={{ marginBottom: theme.spacing.md, color: theme.colors.textPrimary }}>{myId}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
               <Button title="Copy" onPress={async () => { try { await Clipboard.setStringAsync(myId); } catch {} setShowId(false); }} />
               <Button title="Close" onPress={() => setShowId(false)} />
@@ -642,14 +642,14 @@ export default function ConversationListScreen({ route, navigation }: any) {
         </View>
       </Modal>
       <Modal visible={showHelp} transparent animationType="fade" onRequestClose={() => setShowHelp(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Assistant – Getting Started</Text>
-            <Text style={{ color: '#111827', marginBottom: 8 }}>Try these:</Text>
-            <Text style={{ color: '#6b7280', marginBottom: 4 }}>• “Hello”</Text>
-            <Text style={{ color: '#6b7280', marginBottom: 4 }}>• “Plan Saturday: park in the morning, pizza for lunch”</Text>
-            <Text style={{ color: '#6b7280', marginBottom: 4 }}>• “Ingredient: tomato”, then later “Make a recipe”</Text>
-            <Text style={{ color: '#6b7280', marginBottom: 12 }}>You’ll see a friendly summary and a simple plan.</Text>
+        <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Assistant – Getting Started</Text>
+            <Text style={{ color: theme.colors.textPrimary, marginBottom: theme.spacing.sm }}>Try these:</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>• “Hello”</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>• “Plan Saturday: park in the morning, pizza for lunch”</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>• “Ingredient: tomato”, then later “Make a recipe”</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginBottom: theme.spacing.md }}>You’ll see a friendly summary and a simple plan.</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
               <Button title="Close" onPress={() => setShowHelp(false)} />
             </View>
@@ -657,18 +657,18 @@ export default function ConversationListScreen({ route, navigation }: any) {
         </View>
       </Modal>
       <Modal visible={showMe} transparent animationType="fade" onRequestClose={() => { setShowMe(false); }}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-            <Text style={{ fontWeight: '600', marginBottom: 8 }}>Your Profile</Text>
-            <Text style={{ color: '#6b7280', marginBottom: 8 }}>Edit your first and last name:</Text>
-            <View style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: '#f9fafb' }}>
-              <Text style={{ color: '#6b7280', marginBottom: 4 }}>Email (read-only)</Text>
-              <Text selectable>{meProfile?.email || '(not available)'}</Text>
+        <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+            <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Your Profile</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginBottom: theme.spacing.sm }}>Edit your first and last name:</Text>
+            <View style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: theme.spacing.sm, backgroundColor: theme.colors.inputBackground, borderColor: theme.colors.border }}>
+              <Text style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>Email (read-only)</Text>
+              <Text selectable style={{ color: theme.colors.textPrimary }}>{meProfile?.email || '(not available)'}</Text>
             </View>
-            <View style={{ borderWidth: 1, padding: 8, marginBottom: 8 }}>
+            <View style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: theme.spacing.sm, borderColor: theme.colors.border, backgroundColor: theme.colors.inputBackground }}>
               <TextInput placeholder="First Name" value={meProfile?.firstName || ''} onChangeText={(v)=>{ setMeProfile(p=>({ ...(p||{}), firstName: v })); }} />
             </View>
-            <View style={{ borderWidth: 1, padding: 8, marginBottom: 12 }}>
+            <View style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: theme.spacing.md, borderColor: theme.colors.border, backgroundColor: theme.colors.inputBackground }}>
               <TextInput placeholder="Last Name" value={meProfile?.lastName || ''} onChangeText={(v)=>{ setMeProfile(p=>({ ...(p||{}), lastName: v })); }} />
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>

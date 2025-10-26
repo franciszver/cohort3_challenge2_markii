@@ -5,6 +5,7 @@ import { Text, TextInput } from 'react-native';
 import { ThemeProvider } from './src/utils/theme';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { createStackNavigator } from '@react-navigation/stack';
+import { useFonts, DancingScript_700Bold } from '@expo-google-fonts/dancing-script';
 import AuthScreen from './src/screens/AuthScreen';
 import VerifyCodeScreen from './src/screens/VerifyCodeScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -25,6 +26,7 @@ const Stack = createStackNavigator();
 
 export default function App() {
   const navRef = useNavigationContainerRef();
+  const [fontsLoaded] = useFonts({ DancingScript_700Bold });
   useEffect(() => {
     (async () => {
       try {
@@ -83,6 +85,8 @@ export default function App() {
   try { (Text as any).defaultProps = { ...(Text as any).defaultProps, maxFontSizeMultiplier: 1.2 }; } catch {}
   try { (TextInput as any).defaultProps = { ...(TextInput as any).defaultProps, maxFontSizeMultiplier: 1.2 }; } catch {}
 
+  if (!fontsLoaded) return null;
+
   return (
     <ThemeProvider>
       <NavigationContainer ref={navRef}>
@@ -95,7 +99,7 @@ export default function App() {
             <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />
             <Stack.Screen name="ForgotPasswordLinear" component={ForgotPasswordLinearScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Home" component={HomeScreen} />
-            <Stack.Screen name="Conversations" component={ConversationListScreen} options={{ title: 'Conversations', headerTitleAlign: 'center' }} />
+            <Stack.Screen name="Conversations" component={ConversationListScreen} options={{ title: 'NegotiatedAi', headerTitleAlign: 'center', headerTitleStyle: { fontFamily: 'DancingScript_700Bold', fontSize: 24 } }} />
             <Stack.Screen name="GroupCreate" component={GroupCreateScreen} options={{ title: 'Start a chat' }} />
             <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
           </Stack.Navigator>

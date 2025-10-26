@@ -12,6 +12,32 @@ type Theme = {
     bubbleMe: string;
     bubbleOther: string;
     border: string;
+    // Extended tokens for consistent styling
+    inputBackground: string;
+    modal: string;
+    overlay: string; // semi-transparent overlay
+    muted: string; // subtle text/skeletons
+    link: string;
+    success: string;
+    danger: string;
+    destructive: string;
+    buttonPrimaryBg: string;
+    buttonPrimaryText: string;
+    accent: string;
+  };
+  spacing: {
+    xs: number;
+    sm: number;
+    md: number;
+    lg: number;
+    xl: number;
+  };
+  radii: {
+    sm: number;
+    md: number;
+    lg: number;
+    xl: number;
+    full: number;
   };
 };
 
@@ -32,7 +58,21 @@ const Light: Theme = {
     bubbleOther: '#E7F0FF',
     // Border like faint pencil line
     border: '#E5E1DA',
+    // Extended
+    inputBackground: '#FFFFFF',
+    modal: '#FFFFFF',
+    overlay: 'rgba(0,0,0,0.4)',
+    muted: '#6b7280',
+    link: '#2563eb',
+    success: '#16a34a',
+    danger: '#ef4444',
+    destructive: '#ef4444',
+    buttonPrimaryBg: '#F2EFEA',
+    buttonPrimaryText: '#2F2F2F',
+    accent: '#22c55e',
   },
+  spacing: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
+  radii: { sm: 6, md: 8, lg: 12, xl: 16, full: 9999 },
 };
 
 const Dark: Theme = {
@@ -45,7 +85,20 @@ const Dark: Theme = {
     bubbleMe: '#1f2937',
     bubbleOther: '#111827',
     border: '#1f2937',
+    inputBackground: '#0f0f0f',
+    modal: '#181818',
+    overlay: 'rgba(0,0,0,0.6)',
+    muted: '#6b7280',
+    link: '#60a5fa',
+    success: '#22c55e',
+    danger: '#f87171',
+    destructive: '#f87171',
+    buttonPrimaryBg: '#1f2937',
+    buttonPrimaryText: '#e5e7eb',
+    accent: '#22c55e',
   },
+  spacing: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
+  radii: { sm: 6, md: 8, lg: 12, xl: 16, full: 9999 },
 };
 
 const ThemeContext = createContext<Theme>(Light);

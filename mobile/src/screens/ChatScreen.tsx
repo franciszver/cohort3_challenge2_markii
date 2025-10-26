@@ -6,12 +6,11 @@ import { formatTimestamp, formatLastSeen } from '../utils/time';
 import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser, getMessageById } from '../graphql/messages';
 import { getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
 import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
-import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, listParticipantsForConversation } from '../graphql/conversations';
+import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, listParticipantsForConversation, getConversation } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
@@ -32,6 +31,10 @@ export default function ChatScreen({ route, navigation }: any) {
 	const [messages, setMessages] = useState<any[]>([]);
 	const [userIdToEmail, setUserIdToEmail] = useState<Record<string, string>>({});
 	const [myEmail, setMyEmail] = useState<string>('');
+	const [convName, setConvName] = useState<string>('');
+	const [isGroup, setIsGroup] = useState<boolean>(false);
+	const [participantIds, setParticipantIds] = useState<string[]>([]);
+	const [participantsVisible, setParticipantsVisible] = useState(false);
 	const [input, setInput] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const listRef = useRef<any>(null);
@@ -102,14 +105,32 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				if (!cid) throw new Error('No conversation target');
                 // Resolve other participant if not provided
                 let otherId = otherUserId as string | undefined;
-                if (!otherId) {
-                    try {
-                        const partsRes: any = await listParticipantsForConversation(cid, 3);
-                        const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+                try {
+                    const partsRes: any = await listParticipantsForConversation(cid, 100);
+                    const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+                    setParticipantIds(parts.map((p:any)=> p?.userId).filter(Boolean));
+                    if (!otherId) {
                         const other = parts.find((p: any) => p?.userId && p.userId !== me.userId);
                         if (other?.userId) otherId = other.userId;
+                    }
+                    // Prefetch all participant emails for labeling
+                    try {
+                        const ids = Array.from(new Set(parts.map((p:any)=> p?.userId).filter(Boolean).concat(me.userId)));
+                        const usersMap = await batchGetUsersCached(ids);
+                        const map: Record<string, string> = {};
+                        for (const uid of Object.keys(usersMap)) {
+                            const u = (usersMap as any)[uid];
+                            if (u?.email) map[uid] = u.email;
+                        }
+                        setUserIdToEmail(prev => ({ ...prev, ...map }));
                     } catch {}
-                }
+                    // Load conversation metadata (name, group)
+                    try {
+                        const r: any = await getConversation(cid);
+                        const c = r?.data?.getConversation;
+                        if (c) { setConvName(c.name || ''); setIsGroup(!!c.isGroup); }
+                    } catch {}
+                } catch {}
                 setOtherUserResolved(otherId);
                 // Prefetch other participant's email for labeling
                 try {
@@ -670,16 +691,16 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					>
 						<Text style={{ color: theme.colors.primary, fontSize: 18 }}>←</Text>
 					</TouchableOpacity>
-						<View style={{ flex: 1 }}>
-							{(() => { const { ENABLE_CHAT_UX } = getFlags(); return (
-								<ChatHeader
-									username={otherUserId}
-									online={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000) : undefined}
-									subtitle={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined}
-									profile={otherProfile ? { userId: otherProfile.userId, firstName: otherProfile.firstName, lastName: otherProfile.lastName, email: otherProfile.email, avatarColor: otherProfile.avatarColor } : undefined}
-								/>
-							); })()}
+					<TouchableOpacity style={{ flex: 1 }} onPress={() => setParticipantsVisible(true)} accessibilityLabel="Chat info">
+						<View style={{ paddingVertical: 8 }}>
+							<Text style={{ textAlign: 'center', fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>
+								{convName || (isGroup ? 'Group chat' : 'Chat')}
+							</Text>
+							{(() => { const { ENABLE_CHAT_UX } = getFlags(); const sub = ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined; return sub ? (
+								<Text style={{ textAlign: 'center', color: theme.colors.textSecondary, fontSize: 12 }} numberOfLines={1}>{sub}</Text>
+							) : null; })()}
 						</View>
+					</TouchableOpacity>
 						<TouchableOpacity
 							onPress={async () => {
 								try {
@@ -723,9 +744,9 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						</TouchableOpacity>
 					</View>
 				</SafeAreaView>
-            {isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
-            {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
-                <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>Assistant is thinking…</Text>
+				{isTyping ? <Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>typing…</Text> : null}
+				{(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
+					<Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>Assistant is thinking…</Text>
             ) : null}
 			<FlatList
 				inverted
@@ -828,24 +849,44 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				)}
 			/>
 			<Modal visible={infoVisible} transparent animationType="fade" onRequestClose={() => setInfoVisible(false)}>
-				<View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-					<View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '80%' }}>
-						<Text style={{ fontWeight: '600', marginBottom: 8 }}>Message info</Text>
-						<Text style={{ color: '#111827', marginBottom: 12 }}>{infoText}</Text>
+				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '80%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Message info</Text>
+						<Text style={{ color: theme.colors.textPrimary, marginBottom: theme.spacing.md }}>{infoText}</Text>
 						<Button title="Close" onPress={() => setInfoVisible(false)} />
+					</View>
+				</View>
+			</Modal>
+
+			{/* Participants modal */}
+			<Modal visible={participantsVisible} transparent animationType="fade" onRequestClose={() => setParticipantsVisible(false)}>
+				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Participants</Text>
+						{(() => {
+							const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
+							return ids.map((uid) => (
+								<View key={uid} style={{ paddingVertical: 6 }}>
+									<Text style={{ color: theme.colors.textPrimary }}>{userIdToEmail[uid] || uid}</Text>
+								</View>
+							));
+						})()}
+						<View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md }}>
+							<Button title="Close" onPress={() => setParticipantsVisible(false)} />
+						</View>
 					</View>
 				</View>
 			</Modal>
 			{/* Recipes modal */}
 			<Modal visible={recipesVisible} transparent animationType="fade" onRequestClose={() => setRecipesVisible(false)}>
-				<View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-					<View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-						<Text style={{ fontWeight: '600', marginBottom: 8 }}>Recipe suggestions</Text>
+				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Recipe suggestions</Text>
 						{recipesItems.map((r:any, i:number) => (
-							<View key={i} style={{ marginBottom: 8 }}>
-								<Text style={{ fontWeight: '600' }}>{r.title}</Text>
-								<Text style={{ color: '#6b7280' }} numberOfLines={3}>{Array.isArray(r.ingredients) ? r.ingredients.slice(0,5).join(', ') : ''}</Text>
-								<Text style={{ color: '#6b7280' }} numberOfLines={3}>{Array.isArray(r.steps) ? r.steps.slice(0,3).join('. ') : ''}</Text>
+							<View key={i} style={{ marginBottom: theme.spacing.sm }}>
+								<Text style={{ fontWeight: '600', color: theme.colors.textPrimary }}>{r.title}</Text>
+								<Text style={{ color: theme.colors.textSecondary }} numberOfLines={3}>{Array.isArray(r.ingredients) ? r.ingredients.slice(0,5).join(', ') : ''}</Text>
+								<Text style={{ color: theme.colors.textSecondary }} numberOfLines={3}>{Array.isArray(r.steps) ? r.steps.slice(0,3).join('. ') : ''}</Text>
 							</View>
 						))}
 						<View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
@@ -855,10 +896,10 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				</View>
 			</Modal>
             {/* Calendar picker modal */}
-            <Modal visible={calPickVisible} transparent animationType="fade" onRequestClose={() => setCalPickVisible(false)}>
-                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-                    <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-                        <Text style={{ fontWeight: '600', marginBottom: 8 }}>Choose calendar</Text>
+			<Modal visible={calPickVisible} transparent animationType="fade" onRequestClose={() => setCalPickVisible(false)}>
+				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Choose calendar</Text>
                         {calChoices.map((c:any) => (
                             <TouchableOpacity key={c.id} onPress={async () => {
                                 if (calBusy) return; setCalBusy(true);
@@ -880,34 +921,34 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                                 } catch (e) {
                                     try { showToast('Calendar not available in this build'); } catch {}
                                 } finally { setCalBusy(false); calPendingEventsRef.current = null; }
-                            }} style={{ paddingVertical: 8 }}>
-                                <Text style={{ color: '#111827' }}>{c.title || c.name || c.id}</Text>
+							}} style={{ paddingVertical: theme.spacing.sm }}>
+								<Text style={{ color: theme.colors.textPrimary }}>{c.title || c.name || c.id}</Text>
                             </TouchableOpacity>
                         ))}
-                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+						<View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md }}>
                             <Button title={calBusy ? 'Working…' : 'Cancel'} onPress={() => { if (!calBusy) setCalPickVisible(false); }} />
                         </View>
                     </View>
                 </View>
             </Modal>
             {/* Decisions modal */}
-            <Modal visible={decisionsVisible} transparent animationType="fade" onRequestClose={() => setDecisionsVisible(false)}>
-                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-                    <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, width: '85%' }}>
-                        <Text style={{ fontWeight: '600', marginBottom: 8 }}>Recent decisions</Text>
+			<Modal visible={decisionsVisible} transparent animationType="fade" onRequestClose={() => setDecisionsVisible(false)}>
+				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Recent decisions</Text>
                         {decisionsItems.map((d:any, i:number) => (
-                            <View key={i} style={{ marginBottom: 8 }}>
-                                <Text style={{ fontWeight: '600' }}>{d.title || 'Decision'}</Text>
-                                <Text style={{ color: '#6b7280' }} numberOfLines={3}>{d.summary || ''}</Text>
+							<View key={i} style={{ marginBottom: theme.spacing.sm }}>
+								<Text style={{ fontWeight: '600', color: theme.colors.textPrimary }}>{d.title || 'Decision'}</Text>
+								<Text style={{ color: theme.colors.textSecondary }} numberOfLines={3}>{d.summary || ''}</Text>
                                 {(() => { try {
                                   const parts = Array.isArray(d.participants) ? d.participants : [];
                                   const me = myId;
                                   const display = parts.map((p:any) => p === me ? 'You' : p);
                                   const first = display.slice(0, 3);
                                   const more = Math.max(0, display.length - first.length);
-                                  return <Text style={{ color: '#6b7280', fontSize: 12 }}>Participants: {first.join(', ')}{more ? ` +${more} more` : ''}</Text>;
+									return <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Participants: {first.join(', ')}{more ? ` +${more} more` : ''}</Text>;
                                 } catch { return null; } })()}
-                                <Text style={{ color: '#6b7280', fontSize: 12 }}>When: {d.decidedAtISO ? new Date(d.decidedAtISO).toLocaleString() : ''}</Text>
+								<Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>When: {d.decidedAtISO ? new Date(d.decidedAtISO).toLocaleString() : ''}</Text>
                             </View>
                         ))}
                         <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
@@ -916,11 +957,11 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                     </View>
                 </View>
             </Modal>
-			{error ? <Text style={{ color: 'red' }}>{error}</Text> : null}
-			<View style={{ flexDirection: 'row', padding: 8, gap: 8, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
+			{error ? <Text style={{ color: theme.colors.danger }}>{error}</Text> : null}
+			<View style={{ flexDirection: 'row', padding: theme.spacing.sm, gap: theme.spacing.sm, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
 				<TextInput
 					ref={messageInputRef}
-					style={{ flex: 1, borderWidth: 1, padding: 10, borderColor: theme.colors.border, backgroundColor: 'white', borderRadius: 8 }}
+					style={{ flex: 1, borderWidth: 1, padding: theme.spacing.sm, borderColor: theme.colors.border, backgroundColor: theme.colors.inputBackground, borderRadius: theme.radii.md }}
 					value={input}
 					onChangeText={onChangeInput}
 					placeholder="Message"
@@ -928,8 +969,8 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					blurOnSubmit={false}
 					onSubmitEditing={() => { onSend(); messageInputRef.current?.focus?.(); }}
 				/>
-				<TouchableOpacity onPress={onSend} accessibilityLabel="Send message" style={{ backgroundColor: '#F2EFEA', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
-					<Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send</Text>
+				<TouchableOpacity onPress={onSend} accessibilityLabel="Send message" style={{ backgroundColor: theme.colors.buttonPrimaryBg, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radii.md, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
+					<Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Send</Text>
 				</TouchableOpacity>
 			</View>
 
