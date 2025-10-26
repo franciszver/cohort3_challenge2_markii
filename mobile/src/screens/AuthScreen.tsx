@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, Button, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, Button, TouchableOpacity, Animated, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signUp, confirmSignUp, signIn, fetchAuthSession, getCurrentUser, signOut } from 'aws-amplify/auth';
 import { getFlags } from '../utils/flags';
@@ -15,6 +15,7 @@ import { useTheme } from '../utils/theme';
 export default function AuthScreen({ navigation }: any) {
   const [titleFontsLoaded] = useFonts({ DancingScript_700Bold });
   const theme = useTheme();
+  const fadeAnim = useRef(new Animated.Value(1)).current;
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [code, setCode] = useState('');
@@ -28,6 +29,8 @@ export default function AuthScreen({ navigation }: any) {
   const [passwordError, setPasswordError] = useState<string | null>(null);
     const [unverified, setUnverified] = useState<string | null>(null);
     const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
 
   const safe = (obj: any) => {
     try {
@@ -76,6 +79,13 @@ export default function AuthScreen({ navigation }: any) {
     if (!pwOk) ok = false;
     return ok;
   }
+
+  useEffect(() => {
+    try {
+      fadeAnim.setValue(0);
+      Animated.timing(fadeAnim, { toValue: 1, duration: 160, useNativeDriver: true }).start();
+    } catch {}
+  }, [mode]);
 
   const onSignUp = async () => {
     setError(null);
@@ -169,7 +179,7 @@ export default function AuthScreen({ navigation }: any) {
   }, []);
 
   const Body = (
-    <View style={{ flex: 1, padding: 16 }}>
+    <View style={{ flex: 1, padding: 16, justifyContent: 'center', alignItems: 'center' }}>
       <OfflineBanner onRetry={() => { /* no-op for auth */ }} />
       {mode !== 'initial' ? (
         <View style={{ marginBottom: 8 }}>
@@ -178,17 +188,36 @@ export default function AuthScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
       ) : null}
-      <Text style={{ fontSize: 30, marginBottom: 16, fontFamily: titleFontsLoaded ? 'DancingScript_700Bold' : undefined }}>NegotiatedAi</Text>
-      <TextInput placeholder="Email" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" value={email} onChangeText={(t)=>{ setEmail(t); try { if (getFlags().ENABLE_AUTH_UX) AsyncStorage.setItem('auth:email', t.trim()); } catch {} }} style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: 'white' }} />
+      <Animated.View style={{ width: '100%', maxWidth: 420, opacity: fadeAnim }}>
+        <View style={{ padding: 16, borderRadius: 12, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+          <Text style={{ fontSize: 30, marginBottom: 4, textAlign: 'center', fontFamily: titleFontsLoaded ? 'DancingScript_700Bold' : undefined }}>NegotiatedAi</Text>
+          <Text style={{ textAlign: 'center', color: theme.colors.textSecondary, marginBottom: 16 }}>Let's keep it smooth.</Text>
+          <TextInput
+            placeholder="Enter email"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            returnKeyType={mode === 'signin' ? 'next' : 'done'}
+            value={email}
+            onFocus={() => setEmailFocused(true)}
+            onBlur={() => setEmailFocused(false)}
+            onChangeText={(t)=>{ setEmail(t); try { if (getFlags().ENABLE_AUTH_UX) AsyncStorage.setItem('auth:email', t.trim()); } catch {} }}
+            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+          />
       {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && emailError ? (<Text style={{ color: 'red', marginBottom: 8 }}>{emailError}</Text>) : null; })()}
       {mode !== 'initial' ? (
         <>
+          <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>Password</Text>
           <TextInput
             placeholder={mode === 'signup' ? 'Choose a password' : 'Password'}
             secureTextEntry
+            returnKeyType="go"
             value={password}
             onChangeText={(t)=>{ setPassword(t); }}
-            style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: 'white' }}
+            onFocus={() => setPasswordFocused(true)}
+            onBlur={() => setPasswordFocused(false)}
+            onSubmitEditing={() => { if (mode === 'signin') onSignIn(); else if (mode === 'signup') onSignUp(); }}
+            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
           />
           {mode === 'signup' ? (
             <Text style={{ color: '#374151', marginBottom: 4 }}>Please choose a password to create your account.</Text>
@@ -208,17 +237,45 @@ export default function AuthScreen({ navigation }: any) {
       {mode === 'initial' ? (
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <Button title="Sign In" onPress={() => { setMode('signin'); setError(null); }} disabled={!isOnline} />
+            <TouchableOpacity
+              onPress={() => { setMode('signin'); setError(null); }}
+              disabled={!isOnline}
+              style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !isOnline ? 0.6 : 1 }}
+              accessibilityLabel="Go to sign in"
+            >
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sign In</Text>
+            </TouchableOpacity>
           </View>
           <View style={{ flex: 1 }}>
-            <Button title="Sign Up" onPress={() => { setMode('signup'); setError(null); }} disabled={!isOnline} />
+            <TouchableOpacity
+              onPress={() => { setMode('signup'); setError(null); }}
+              disabled={!isOnline}
+              style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !isOnline ? 0.6 : 1 }}
+              accessibilityLabel="Go to sign up"
+            >
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sign Up</Text>
+            </TouchableOpacity>
           </View>
         </View>
       ) : null}
 
       {mode === 'signin' ? (
         <View style={{ marginTop: 8 }}>
-          <Button title={signingIn ? 'Entering…' : 'Enter'} onPress={onSignIn} disabled={isSignedIn || signingIn || !isOnline} color={theme.colors.primary} />
+          <TouchableOpacity
+            onPress={onSignIn}
+            disabled={isSignedIn || signingIn || !isOnline}
+            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (isSignedIn || signingIn || !isOnline) ? 0.6 : 1 }}
+            accessibilityLabel="Enter"
+          >
+            {signingIn ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Entering…</Text>
+              </View>
+            ) : (
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Enter</Text>
+            )}
+          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -227,18 +284,17 @@ export default function AuthScreen({ navigation }: any) {
           <TouchableOpacity
             onPress={onSignUp}
             disabled={signingUp || !isOnline}
-            style={{
-              backgroundColor: '#F2EFEA',
-              padding: 10,
-              borderRadius: 6,
-              alignItems: 'center',
-              opacity: (signingUp || !isOnline) ? 0.6 : 1,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
+            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (signingUp || !isOnline) ? 0.6 : 1 }}
             accessibilityLabel="Submit sign up"
           >
-            <Text style={{ color: '#2F2F2F', fontWeight: '600' }}>{signingUp ? 'Submitting…' : 'Submit'}</Text>
+            {signingUp ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submitting…</Text>
+              </View>
+            ) : (
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submit</Text>
+            )}
           </TouchableOpacity>
         </View>
       ) : null}
@@ -249,17 +305,19 @@ export default function AuthScreen({ navigation }: any) {
         </View>
       ) : null}
 
-      {isSignedIn ? (
-        <View style={{ marginTop: 12 }}>
-          <Button title="Sign Out" onPress={async () => { await signOut(); setIsSignedIn(false); appendLog('signed out'); }} />
+        {isSignedIn ? (
+          <View style={{ marginTop: 12 }}>
+            <Button title="Sign Out" onPress={async () => { await signOut(); setIsSignedIn(false); appendLog('signed out'); }} />
+          </View>
+        ) : null}
+
+        {error ? (
+          <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>Error: {error}</Text>
+        ) : null}
+
+        {null}
         </View>
-      ) : null}
-
-      {error ? (
-        <Text style={{ color: 'red', marginTop: 12 }}>Error: {error}</Text>
-      ) : null}
-
-      {null}
+      </Animated.View>
     </View>
   );
 
