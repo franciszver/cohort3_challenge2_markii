@@ -219,6 +219,16 @@ export default function ConversationListScreen({ route, navigation }: any) {
                 return next;
               });
 
+              // Check if user is currently viewing this conversation - suppress notifications if so
+              try {
+                const { getActiveConversation } = await import('../utils/notify');
+                const activeConv = getActiveConversation();
+                if (activeConv === id) {
+                  // User is viewing this chat, skip all notifications
+                  return;
+                }
+              } catch {}
+
               // Throttle foreground notification per conversation
               const now = Date.now();
               const last = lastNotifyAtRef.current[id] || 0;

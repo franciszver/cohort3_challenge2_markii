@@ -1,7 +1,29 @@
 import * as Notifications from 'expo-notifications';
+import { AppState } from 'react-native';
 import { getFlags } from './flags';
 
 const sentTimes: number[] = [];
+let activeConversationId: string | null = null;
+
+// Track which conversation is currently being viewed
+export function setActiveConversation(conversationId: string) {
+  activeConversationId = conversationId;
+}
+
+export function clearActiveConversation() {
+  activeConversationId = null;
+}
+
+export function getActiveConversation(): string | null {
+  return activeConversationId;
+}
+
+// Clear active conversation when app goes to background
+AppState.addEventListener('change', (state) => {
+  if (state === 'background' || state === 'inactive') {
+    clearActiveConversation();
+  }
+});
 
 export function canSendNotificationNow(): boolean {
   try {

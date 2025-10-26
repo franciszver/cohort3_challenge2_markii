@@ -640,7 +640,19 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 					}
 				} catch {}
 		})();
-		return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); presenceSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); try { if (drainIntervalRef.current) clearInterval(drainIntervalRef.current); } catch {}; try { (drainIntervalRef as any).unsubNet?.(); } catch {}; try { (drainIntervalRef as any).subApp?.remove?.(); } catch {}; };
+		return () => { 
+			subRef.current?.unsubscribe?.(); 
+			typingSubRef.current?.unsubscribe?.(); 
+			receiptsSubRef.current?.unsubscribe?.(); 
+			deleteSubRef.current?.unsubscribe?.(); 
+			presenceSubRef.current?.unsubscribe?.(); 
+			if (typingTimerRef.current) clearTimeout(typingTimerRef.current); 
+			try { if (drainIntervalRef.current) clearInterval(drainIntervalRef.current); } catch {}; 
+			try { (drainIntervalRef as any).unsubNet?.(); } catch {}; 
+			try { (drainIntervalRef as any).subApp?.remove?.(); } catch {}; 
+			// Clear active conversation on unmount
+			try { const { clearActiveConversation } = require('../utils/notify'); clearActiveConversation(); } catch {}
+		};
 	}, []);
 
 	// Track participant count transitions and show system message when moving to multi-user
@@ -679,6 +691,11 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 						await setMyLastRead(cidNow, me.userId, new Date().toISOString());
 					}
 				} catch {}
+				// Clear active conversation when leaving chat
+				try {
+					const { clearActiveConversation } = await import('../utils/notify');
+					clearActiveConversation();
+				} catch {}
 			}
 			if (isFocused) {
 				try {
@@ -686,6 +703,11 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 					const cidNow = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
 					if (cidNow) {
 						await setMyLastRead(cidNow, me.userId, new Date().toISOString());
+						// Set active conversation to suppress notifications for this chat
+						try {
+							const { setActiveConversation } = await import('../utils/notify');
+							setActiveConversation(cidNow);
+						} catch {}
 						// Always attempt to fetch the latest page when entering the chat
 						if (!latestRefreshInFlightRef.current) {
 							latestRefreshInFlightRef.current = true;
