@@ -170,4 +170,14 @@ export async function updateConversationLastMessage(conversationId: string, prev
   return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
 }
 
+export async function updateConversationName(conversationId: string, name: string) {
+  const mutation = /* GraphQL */ `
+    mutation UpdateConversation($input: UpdateConversationInput!) {
+      updateConversation(input: $input) { id name updatedAt }
+    }
+  `;
+  const input: any = { id: conversationId, name };
+  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+}
+
 

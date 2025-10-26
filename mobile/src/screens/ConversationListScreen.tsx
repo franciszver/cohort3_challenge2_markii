@@ -317,7 +317,24 @@ export default function ConversationListScreen({ route, navigation }: any) {
   }, [route?.params?.fromAuth]);
 
   useFocusEffect(useCallback(() => {
-    load(true);
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('handoff:conv-rename');
+        if (raw) {
+          try {
+            const payload = JSON.parse(raw || '{}');
+            const id = payload?.id;
+            const name = payload?.name ?? '';
+            if (id) {
+              setItems(prev => prev.map((c:any) => c.id === id ? { ...c, name } : c));
+              setAllItems(prev => prev.map((c:any) => c.id === id ? { ...c, name } : c));
+            }
+          } catch {}
+          try { await AsyncStorage.removeItem('handoff:conv-rename'); } catch {}
+        }
+      } catch {}
+      try { await load(true); } catch {}
+    })();
     // subscribe to toast bus
     try { toastUnsubRef.current?.(); } catch {}
     toastUnsubRef.current = subscribeToasts((msg) => {

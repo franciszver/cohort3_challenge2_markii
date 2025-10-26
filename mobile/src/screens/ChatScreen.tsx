@@ -10,7 +10,7 @@ import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
 import { updateLastSeen, subscribeUserPresence, batchGetUsersCached, getEmailCacheSnapshot } from '../graphql/users';
-import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, getConversation } from '../graphql/conversations';
+import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, getConversation, updateConversationName } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
@@ -65,6 +65,10 @@ const otherUserId = route.params?.otherUserSub as string;
 	const [infoVisible, setInfoVisible] = useState(false);
 	const [infoText, setInfoText] = useState<string>('');
 	const [menuVisible, setMenuVisible] = useState(false);
+	const [renameVisible, setRenameVisible] = useState(false);
+	const [renameInput, setRenameInput] = useState('');
+	const [renameBusy, setRenameBusy] = useState(false);
+	const [renameError, setRenameError] = useState<string | null>(null);
 const [otherProfile, setOtherProfile] = useState<any | null>(null);
 const [myId, setMyId] = useState<string>('');
 const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(undefined);
@@ -991,6 +995,18 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                         </TouchableOpacity>
                         ) : null}
                         <TouchableOpacity
+                            onPress={() => {
+                                setMenuVisible(false);
+                                setRenameError(null);
+                                setRenameInput(convName || '');
+                                setRenameVisible(true);
+                            }}
+                            style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                            accessibilityLabel="Rename conversation"
+                        >
+                            <Text style={{ color: theme.colors.textPrimary }}>Rename Conversation</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
                             onPress={async () => {
                                 setMenuVisible(false);
                                 try {
@@ -1032,6 +1048,82 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                         >
                             <Text style={{ color: theme.colors.destructive }}>Delete Conversation</Text>
                         </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Rename conversation modal */}
+            <Modal visible={renameVisible} transparent animationType="fade" onRequestClose={() => { if (!renameBusy) setRenameVisible(false); }}>
+                <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+                        <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Rename conversation</Text>
+                        <TextInput
+                            placeholder="Conversation name (optional)"
+                            value={renameInput}
+                            onChangeText={setRenameInput}
+                            style={{ borderWidth: 1, padding: theme.spacing.sm, backgroundColor: theme.colors.inputBackground, borderColor: theme.colors.border, borderRadius: theme.radii.md }}
+                            autoCapitalize="sentences"
+                            autoCorrect
+                            returnKeyType="done"
+                            editable={!renameBusy}
+                            onSubmitEditing={async () => {
+                                if (renameBusy) return;
+                                try {
+                                    setRenameBusy(true);
+                                    setRenameError(null);
+                                    const newName = (renameInput || '').trim();
+                                    const oldName = convName;
+                                    const cid = conversationId || (providedConversationId || '');
+                                    if (!cid) { setRenameBusy(false); return; }
+                                    // optimistic local update + handoff for list
+                                    setConvName(newName);
+                                    try { await AsyncStorage.setItem('handoff:conv-rename', JSON.stringify({ id: cid, name: newName })); } catch {}
+                                    try {
+                                        await updateConversationName(cid, newName);
+                                        try { showToast('Name updated'); } catch {}
+                                        setRenameVisible(false);
+                                    } catch (e) {
+                                        setConvName(oldName);
+                                        setRenameError((e as any)?.message || 'Rename failed');
+                                    } finally {
+                                        setRenameBusy(false);
+                                    }
+                                } catch (e) {
+                                    setRenameBusy(false);
+                                    setRenameError((e as any)?.message || 'Rename failed');
+                                }
+                            }}
+                        />
+                        {renameError ? <Text style={{ color: theme.colors.danger, marginTop: theme.spacing.sm }}>{renameError}</Text> : null}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md, gap: theme.spacing.sm }}>
+                            <Button title={renameBusy ? 'Saving…' : 'Save'} onPress={async () => {
+                                if (renameBusy) return;
+                                try {
+                                    setRenameBusy(true);
+                                    setRenameError(null);
+                                    const newName = (renameInput || '').trim();
+                                    const oldName = convName;
+                                    const cid = conversationId || (providedConversationId || '');
+                                    if (!cid) { setRenameBusy(false); return; }
+                                    setConvName(newName);
+                                    try { await AsyncStorage.setItem('handoff:conv-rename', JSON.stringify({ id: cid, name: newName })); } catch {}
+                                    try {
+                                        await updateConversationName(cid, newName);
+                                        try { showToast('Name updated'); } catch {}
+                                        setRenameVisible(false);
+                                    } catch (e) {
+                                        setConvName(oldName);
+                                        setRenameError((e as any)?.message || 'Rename failed');
+                                    } finally {
+                                        setRenameBusy(false);
+                                    }
+                                } catch (e) {
+                                    setRenameBusy(false);
+                                    setRenameError((e as any)?.message || 'Rename failed');
+                                }
+                            }} />
+                            <Button title="Cancel" onPress={() => { if (!renameBusy) setRenameVisible(false); }} />
+                        </View>
                     </View>
                 </View>
             </Modal>
