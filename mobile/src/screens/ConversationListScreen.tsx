@@ -485,22 +485,52 @@ export default function ConversationListScreen({ route, navigation }: any) {
             <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e5e7eb' }}>
                 <Text style={{ fontSize: 10, color: '#111827' }}>
-                  {(() => { const p = item._profiles?.[item._participants?.[0]?.userId]; if (p) return `${(p.firstName||'').slice(0,1)}${(p.lastName||'').slice(0,1)}`.toUpperCase() || 'U1'; return (item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2); })()}
+                  {(() => {
+                    const uid = item._participants?.[0]?.userId;
+                    const p = uid ? item._profiles?.[uid] : null;
+                    const u = uid ? item._users?.[uid] : null;
+                    const email = (p?.email || u?.email || '');
+                    const local = email ? email.split('@')[0] : (u?.username || 'U1');
+                    return local.length > 4 ? local.slice(0,4) : local;
+                  })()}
                 </Text>
               </View>
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
                 <Text style={{ fontSize: 10, color: '#111827' }}>
-                  {(() => { const p = item._profiles?.[item._participants?.[1]?.userId]; if (p) return `${(p.firstName||'').slice(0,1)}${(p.lastName||'').slice(0,1)}`.toUpperCase() || 'U2'; return (item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2); })()}
+                  {(() => {
+                    const uid = item._participants?.[1]?.userId;
+                    const p = uid ? item._profiles?.[uid] : null;
+                    const u = uid ? item._users?.[uid] : null;
+                    const email = (p?.email || u?.email || '');
+                    const local = email ? email.split('@')[0] : (u?.username || 'U2');
+                    return local.length > 4 ? local.slice(0,4) : local;
+                  })()}
                 </Text>
               </View>
             </View>
           ) : (
             <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[0]?.userId]?.username || 'U1').slice(0,2)}</Text>
+                <Text style={{ fontSize: 10, color: '#374151' }}>
+                  {(() => {
+                    const uid = item._participants?.[0]?.userId;
+                    const u = uid ? item._users?.[uid] : null;
+                    const email = u?.email || '';
+                    const local = email ? email.split('@')[0] : (u?.username || 'U1');
+                    return local.length > 4 ? local.slice(0,4) : local;
+                  })()}
+                </Text>
               </View>
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' }}>
-                <Text style={{ fontSize: 10, color: '#374151' }}>{(item._users?.[item._participants?.[1]?.userId]?.username || 'U2').slice(0,2)}</Text>
+                <Text style={{ fontSize: 10, color: '#374151' }}>
+                  {(() => {
+                    const uid = item._participants?.[1]?.userId;
+                    const u = uid ? item._users?.[uid] : null;
+                    const email = u?.email || '';
+                    const local = email ? email.split('@')[0] : (u?.username || 'U2');
+                    return local.length > 4 ? local.slice(0,4) : local;
+                  })()}
+                </Text>
               </View>
             </View>
           )}
