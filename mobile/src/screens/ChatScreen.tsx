@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, TouchableWithoutFeedback, Modal, Alert, ActivityIndicator } from 'react-native';
+import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, TouchableWithoutFeedback, Modal, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
@@ -53,6 +53,7 @@ export default function ChatScreen({ route, navigation }: any) {
     const [addInput, setAddInput] = useState('');
     const [addBusy, setAddBusy] = useState(false);
     const [addError, setAddError] = useState<string | null>(null);
+    const [availableContacts, setAvailableContacts] = useState<Array<{ userId: string; displayName: string }>>([]);
     const [conversationId, setConversationId] = useState<string>('');
 	const didInitialScrollRef = useRef(false);
 	const isNearBottomRef = useRef(true);
@@ -102,6 +103,89 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 			setNicknames(await allNicknames);
 		} catch (e) {
 			console.warn('[chat] Failed to load nicknames:', e);
+		}
+	}
+
+	// Load available contacts for "Add Participant" modal
+	async function loadAvailableContacts() {
+		try {
+			await preloadNicknames();
+			const nicknames = await getAllNicknames();
+			const me = await getCurrentUser();
+			
+		// Collect all known userIds from cached conversations
+		const knownUserIds = new Set<string>();
+		const allKeys = await AsyncStorage.getAllKeys();
+		
+		// Helper to validate if string looks like a real userId (UUID-like format)
+		const isValidUserId = (id: string): boolean => {
+			if (!id || id.length < 10) return false;
+			// UserIds should contain dashes and be reasonably long (UUIDs/GUIDs)
+			if (!id.includes('-')) return false;
+			// Exclude common non-userId values
+			const invalid = ['system', 'unknown', 'deleted', 'anonymous', 'guest', 'admin'];
+			if (invalid.includes(id.toLowerCase())) return false;
+			return true;
+		};
+		
+		// Scan message history for userIds
+		for (const key of allKeys) {
+			if (key.startsWith('history:')) {
+				try {
+					const cached = await AsyncStorage.getItem(key);
+					if (cached) {
+						const messages = JSON.parse(cached);
+						if (Array.isArray(messages)) {
+							messages.forEach((msg: any) => {
+								if (msg.senderId && 
+									msg.senderId !== me.userId && 
+									msg.senderId !== 'assistant-bot' && 
+									!msg.senderId.startsWith('assistant-') &&
+									isValidUserId(msg.senderId)) {
+									knownUserIds.add(msg.senderId);
+								}
+							});
+						}
+					}
+				} catch {}
+			}
+		}
+			
+			// Build contact list
+			const contacts: Array<{ userId: string; displayName: string }> = [];
+			
+			// Get current participants to filter them out
+			const currentParticipants = new Set([myId, ...participantIds]);
+			
+			// Add all users with nicknames (not in current conversation, only valid userIds)
+			for (const [userId, nickname] of Object.entries(nicknames)) {
+				if (!currentParticipants.has(userId) && 
+					userId !== 'assistant-bot' && 
+					!userId.startsWith('assistant-') &&
+					isValidUserId(userId)) {
+					contacts.push({
+						userId,
+						displayName: `${nickname} (${userId.slice(0, 11)}${userId.length > 11 ? '...' : ''})`
+					});
+				}
+			}
+			
+			// Add known users without nicknames (not in current conversation)
+			for (const userId of knownUserIds) {
+				if (!nicknames[userId] && !currentParticipants.has(userId)) {
+					contacts.push({
+						userId,
+						displayName: userId.length > 14 ? `${userId.slice(0, 14)}...` : userId
+					});
+				}
+			}
+			
+			// Sort alphabetically
+			contacts.sort((a, b) => a.displayName.localeCompare(b.displayName));
+			
+			setAvailableContacts(contacts);
+		} catch (e) {
+			console.warn('[chat] Failed to load available contacts:', e);
 		}
 	}
 
@@ -930,7 +1014,7 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 						) : item.messageType === 'IMAGE' && item.attachments?.[0] ? (
 							<Image
 								source={{ uri: item.attachments[0] }}
-								style={[{ width: 200, height: 200, borderRadius: 8 }, item.senderId !== myId ? { marginLeft: 'auto' } : null]}
+								style={[{ width: 200, height: 200, borderRadius: 8 }, item.senderId === myId ? { alignSelf: 'flex-end' } : null]}
 							/>
 						) : (
 							<TouchableOpacity onLongPress={async () => {
@@ -955,8 +1039,8 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 									setInfoText('Unable to load message info.');
 									setInfoVisible(true);
 								}
-								}}>
-                                <View style={[{ maxWidth: '95%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }, item.senderId !== myId ? { marginLeft: 'auto' } : null ]}>
+								}} style={{ width: '100%' }}>
+                                <View style={[{ maxWidth: '95%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4, alignSelf: item.senderId === myId ? 'flex-end' : 'flex-start' }]}>
 								<Text style={{ color: theme.colors.textPrimary }}>
 									{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
 									{item.__status ? ' ' : ''}
@@ -1021,7 +1105,13 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
                     <View style={{ marginTop: 64, marginRight: 12, backgroundColor: theme.colors.modal, padding: 8, borderRadius: theme.radii.md, borderWidth: 1, borderColor: theme.colors.border, minWidth: 200 }}>
                         {(() => { try { const { ENABLE_ADD_TO_GROUP } = getFlags(); return ENABLE_ADD_TO_GROUP; } catch { return false; } })() ? (
                         <TouchableOpacity
-                            onPress={() => { setMenuVisible(false); setAddError(null); setAddInput(''); setAddVisible(true); }}
+                            onPress={async () => { 
+                                setMenuVisible(false); 
+                                setAddError(null); 
+                                setAddInput(''); 
+                                await loadAvailableContacts();
+                                setAddVisible(true); 
+                            }}
                             style={{ paddingVertical: 10, paddingHorizontal: 8 }}
                             accessibilityLabel="Add participant"
                         >
@@ -1166,8 +1256,43 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
             {(() => { try { const { ENABLE_ADD_TO_GROUP } = getFlags(); return ENABLE_ADD_TO_GROUP; } catch { return false; } })() ? (
             <Modal visible={addVisible} transparent animationType="fade" onRequestClose={() => { if (!addBusy) setAddVisible(false); }}>
                 <View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
-                    <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
+                    <View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%', maxHeight: '80%' }}>
                         <Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Add participant</Text>
+                        
+                        {availableContacts.length > 0 && (
+                            <>
+                                <Text style={{ marginBottom: 4, color: theme.colors.textSecondary, fontSize: 12 }}>Available Contacts (tap to add)</Text>
+                                <ScrollView style={{ maxHeight: 180, marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface }}>
+                                    {availableContacts.map((contact) => (
+                                        <TouchableOpacity
+                                            key={contact.userId}
+                                            onPress={async () => {
+                                                if (addBusy) return;
+                                                try {
+                                                    setAddBusy(true);
+                                                    setAddError(null);
+                                                    const { ensureParticipant } = await import('../graphql/conversations');
+                                                    await ensureParticipant(conversationId, contact.userId, 'MEMBER');
+                                                    try { showToast('Participant added'); } catch {}
+                                                    setAddVisible(false);
+                                                } catch (e) {
+                                                    setAddError((e as any)?.message || 'Add failed');
+                                                } finally {
+                                                    setAddBusy(false);
+                                                }
+                                            }}
+                                            style={{ padding: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.border, minHeight: 44, justifyContent: 'center' }}
+                                        >
+                                            <Text style={{ color: theme.colors.textPrimary }} numberOfLines={1}>
+                                                {contact.displayName}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </>
+                        )}
+                        
+                        <Text style={{ marginBottom: 4, color: theme.colors.textSecondary, fontSize: 12 }}>Or enter User ID manually</Text>
                         <TextInput
                             placeholder="Enter User ID"
                             value={addInput}

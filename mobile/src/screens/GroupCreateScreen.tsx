@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
-import { View, TextInput, Text, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, TextInput, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { useTheme } from '../utils/theme';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { createConversation } from '../graphql/conversations';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { preloadNicknames, getAllNicknames } from '../utils/nicknames';
 
 export default function GroupCreateScreen({ navigation }: any) {
   const theme = useTheme();
@@ -11,7 +13,90 @@ export default function GroupCreateScreen({ navigation }: any) {
   const [participants, setParticipants] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [knownContacts, setKnownContacts] = useState<Array<{ userId: string; displayName: string }>>([]);
   const hasParticipants = participants.length > 0;
+
+  // Load known contacts on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        await preloadNicknames();
+        const nicknames = await getAllNicknames();
+        const me = await getCurrentUser();
+        
+        // Collect all known userIds from cached conversations
+        const knownUserIds = new Set<string>();
+        const allKeys = await AsyncStorage.getAllKeys();
+        
+        // Helper to validate if string looks like a real userId (UUID-like format)
+        const isValidUserId = (id: string): boolean => {
+          if (!id || id.length < 10) return false;
+          // UserIds should contain dashes and be reasonably long (UUIDs/GUIDs)
+          if (!id.includes('-')) return false;
+          // Exclude common non-userId values
+          const invalid = ['system', 'unknown', 'deleted', 'anonymous', 'guest', 'admin'];
+          if (invalid.includes(id.toLowerCase())) return false;
+          return true;
+        };
+        
+        // Scan message history for userIds
+        for (const key of allKeys) {
+          if (key.startsWith('history:')) {
+            try {
+              const cached = await AsyncStorage.getItem(key);
+              if (cached) {
+                const messages = JSON.parse(cached);
+                if (Array.isArray(messages)) {
+                  messages.forEach((msg: any) => {
+                    if (msg.senderId && 
+                        msg.senderId !== me.userId && 
+                        msg.senderId !== 'assistant-bot' && 
+                        !msg.senderId.startsWith('assistant-') &&
+                        isValidUserId(msg.senderId)) {
+                      knownUserIds.add(msg.senderId);
+                    }
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+        
+        // Build contact list
+        const contacts: Array<{ userId: string; displayName: string }> = [];
+        
+        // Add all users with nicknames (only valid userIds)
+        for (const [userId, nickname] of Object.entries(nicknames)) {
+          if (userId !== me.userId && 
+              userId !== 'assistant-bot' && 
+              !userId.startsWith('assistant-') &&
+              isValidUserId(userId)) {
+            contacts.push({
+              userId,
+              displayName: `${nickname} (${userId.slice(0, 11)}${userId.length > 11 ? '...' : ''})`
+            });
+          }
+        }
+        
+        // Add known users without nicknames
+        for (const userId of knownUserIds) {
+          if (!nicknames[userId]) {
+            contacts.push({
+              userId,
+              displayName: userId.length > 14 ? `${userId.slice(0, 14)}...` : userId
+            });
+          }
+        }
+        
+        // Sort alphabetically
+        contacts.sort((a, b) => a.displayName.localeCompare(b.displayName));
+        
+        setKnownContacts(contacts);
+      } catch (e) {
+        console.warn('[GroupCreate] Failed to load contacts:', e);
+      }
+    })();
+  }, []);
 
   const addParticipant = () => {
     try {
@@ -79,6 +164,32 @@ export default function GroupCreateScreen({ navigation }: any) {
         />
 
         <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>Participants</Text>
+        
+        {knownContacts.length > 0 && (
+          <>
+            <Text style={{ marginBottom: 4, color: theme.colors.textSecondary, fontSize: 12 }}>Known Contacts (tap to add)</Text>
+            <ScrollView style={{ maxHeight: 180, marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface }}>
+              {knownContacts.map((contact) => (
+                <TouchableOpacity
+                  key={contact.userId}
+                  onPress={() => {
+                    const nextSet = new Set([...participants, contact.userId]);
+                    setParticipants(Array.from(nextSet));
+                  }}
+                  disabled={participants.includes(contact.userId)}
+                  style={{ padding: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.border, opacity: participants.includes(contact.userId) ? 0.4 : 1, minHeight: 44, justifyContent: 'center' }}
+                >
+                  <Text style={{ color: theme.colors.textPrimary }} numberOfLines={1}>
+                    {contact.displayName}
+                    {participants.includes(contact.userId) ? ' ✓' : ''}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </>
+        )}
+
+        <Text style={{ marginBottom: 4, color: theme.colors.textSecondary, fontSize: 12 }}>Or enter User ID manually</Text>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 }}>
           <TextInput
             placeholder="Paste a User ID"
@@ -94,7 +205,6 @@ export default function GroupCreateScreen({ navigation }: any) {
             <Text style={{ fontSize: 20, color: theme.colors.textPrimary }}>+</Text>
           </TouchableOpacity>
         </View>
-        <Text style={{ marginTop: -4, marginBottom: 8, color: theme.colors.textSecondary, fontSize: 12 }}>User ID</Text>
         <View style={{ gap: 8, marginBottom: 12 }}>
           {participants.map((id) => (
             <View key={id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: theme.colors.border, padding: theme.spacing.sm, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface }}>
