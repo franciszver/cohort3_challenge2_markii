@@ -2,8 +2,8 @@
 import type { ExpoConfig } from 'expo/config';
 
 const config: ExpoConfig = {
-  name: 'cohort3-chat',
-  slug: 'cohort3-chat',
+  name: 'NegotiatedAi',
+  slug: 'negotiatedai',
   orientation: 'portrait',
   userInterfaceStyle: 'light',
   icon: './assets/icon.png',

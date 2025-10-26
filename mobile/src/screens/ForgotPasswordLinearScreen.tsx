@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Button } from 'react-native';
+import { useTheme } from '../utils/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { resetPassword, confirmResetPassword, signIn } from 'aws-amplify/auth';
 import OfflineBanner from '../components/OfflineBanner';
 import NetInfo from '@react-native-community/netinfo';
 
 export default function ForgotPasswordLinearScreen({ navigation }: any) {
+  const theme = useTheme();
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -51,7 +53,22 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
         <>
           <TextInput placeholder="Verification code" value={code} onChangeText={setCode} style={{ borderWidth: 1, padding: 8, marginBottom: 12, backgroundColor: 'white' }} />
           <TextInput placeholder="New password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 12, backgroundColor: 'white' }} />
-          <Button title={busy ? 'Submitting…' : 'Submit'} onPress={onConfirm} disabled={!code || !password || busy || !isOnline} />
+          <TouchableOpacity
+            onPress={onConfirm}
+            disabled={!code || !password || busy || !isOnline}
+            style={{
+              backgroundColor: '#F2EFEA',
+              padding: 10,
+              borderRadius: 6,
+              alignItems: 'center',
+              opacity: (!code || !password || busy || !isOnline) ? 0.6 : 1,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+            accessibilityLabel="Submit new password"
+          >
+            <Text style={{ color: '#2F2F2F', fontWeight: '600' }}>{busy ? 'Submitting…' : 'Submit'}</Text>
+          </TouchableOpacity>
         </>
       ) : null}
       {error ? <Text style={{ color: 'red', marginTop: 12 }}>{error}</Text> : null}

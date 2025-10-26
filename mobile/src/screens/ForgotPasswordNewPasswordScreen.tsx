@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button } from 'react-native';
+import { useTheme } from '../utils/theme';
 import { confirmResetPassword, signIn } from 'aws-amplify/auth';
 
 export default function ForgotPasswordNewPasswordScreen({ route, navigation }: any) {
+  const theme = useTheme();
   const { email, code } = route.params || {};
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -33,7 +35,22 @@ export default function ForgotPasswordNewPasswordScreen({ route, navigation }: a
       <TextInput placeholder="New password" secureTextEntry value={password} onChangeText={setPassword} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
       <TextInput placeholder="Confirm new password" secureTextEntry value={confirm} onChangeText={setConfirm} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
       {error ? <Text style={{ color: 'red', marginTop: 8 }}>{error}</Text> : null}
-      <Button title="Submit" onPress={onSubmit} disabled={!password || !confirm} />
+      <TouchableOpacity
+        onPress={onSubmit}
+        disabled={!password || !confirm}
+        style={{
+          backgroundColor: '#F2EFEA',
+          padding: 10,
+          borderRadius: 6,
+          alignItems: 'center',
+          opacity: (!password || !confirm) ? 0.6 : 1,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        }}
+        accessibilityLabel="Submit new password"
+      >
+        <Text style={{ color: '#2F2F2F', fontWeight: '600' }}>Submit</Text>
+      </TouchableOpacity>
     </View>
   );
 }

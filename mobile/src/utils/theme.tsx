@@ -17,14 +17,21 @@ type Theme = {
 
 const Light: Theme = {
   colors: {
-    background: '#F0F9FF',
+    // Paper off-white background
+    background: '#FAF8F4',
+    // Surface like paper sheet
     surface: '#FFFFFF',
-    textPrimary: '#0F172A',
-    textSecondary: '#475569',
-    primary: '#38BDF8',
-    bubbleMe: '#E0F2FE',
+    // Pencil lead dark gray for main text
+    textPrimary: '#2F2F2F',
+    // Softer graphite for secondary text
+    textSecondary: '#6B6B6B',
+    // Accent resembling pencil graphite highlight
+    primary: '#4B5563',
+    // Message bubbles akin to light graphite on paper
+    bubbleMe: '#F2EFEA',
     bubbleOther: '#FFFFFF',
-    border: '#E2E8F0',
+    // Border like faint pencil line
+    border: '#E5E1DA',
   },
 };
 

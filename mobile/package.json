@@ -10,6 +10,7 @@
     "push:schema": "node ../scripts/push-schema.js"
   },
   "dependencies": {
+    "@expo-google-fonts/dancing-script": "^0.2.3",
     "@aws-amplify/react-native": "^1.2.0",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/masked-view": "^0.1.11",
@@ -19,6 +20,7 @@
     "@react-navigation/stack": "^7.4.10",
     "aws-amplify": "^6.15.7",
     "expo": "~54.0.19",
+    "expo-font": "~14.0.9",
     "expo-calendar": "~15.0.7",
     "expo-clipboard": "^8.0.7",
     "expo-constants": "^18.0.10",

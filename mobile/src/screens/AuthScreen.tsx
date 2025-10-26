@@ -9,11 +9,16 @@ import Constants from 'expo-constants';
 import { LinearGradient } from 'expo-linear-gradient';
 import OfflineBanner from '../components/OfflineBanner';
 import NetInfo from '@react-native-community/netinfo';
+import { useFonts, DancingScript_700Bold } from '@expo-google-fonts/dancing-script';
+import { useTheme } from '../utils/theme';
 
 export default function AuthScreen({ navigation }: any) {
+  const [titleFontsLoaded] = useFonts({ DancingScript_700Bold });
+  const theme = useTheme();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [code, setCode] = useState('');
+  const [mode, setMode] = useState<'initial' | 'signin' | 'signup'>('initial');
   const [log, setLog] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isSignedIn, setIsSignedIn] = useState<boolean>(false);
@@ -166,32 +171,83 @@ export default function AuthScreen({ navigation }: any) {
   const Body = (
     <View style={{ flex: 1, padding: 16 }}>
       <OfflineBanner onRetry={() => { /* no-op for auth */ }} />
-      <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 16 }}>WordStream</Text>
+      {mode !== 'initial' ? (
+        <View style={{ marginBottom: 8 }}>
+          <TouchableOpacity accessibilityLabel="Back to start" onPress={() => { setMode('initial'); setPassword(''); setError(null); }}>
+            <Text style={{ fontSize: 16, color: '#4B5563' }}>{'← Back'}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      <Text style={{ fontSize: 30, marginBottom: 16, fontFamily: titleFontsLoaded ? 'DancingScript_700Bold' : undefined }}>NegotiatedAi</Text>
       <TextInput placeholder="Email" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" value={email} onChangeText={(t)=>{ setEmail(t); try { if (getFlags().ENABLE_AUTH_UX) AsyncStorage.setItem('auth:email', t.trim()); } catch {} }} style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: 'white' }} />
       {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && emailError ? (<Text style={{ color: 'red', marginBottom: 8 }}>{emailError}</Text>) : null; })()}
-      <TextInput placeholder="Password" secureTextEntry value={password} onChangeText={(t)=>{ setPassword(t); }} style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: 'white' }} />
-      {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && passwordError ? (<Text style={{ color: 'red', marginBottom: 12 }}>{passwordError}</Text>) : null; })()}
+      {mode !== 'initial' ? (
+        <>
+          <TextInput
+            placeholder={mode === 'signup' ? 'Choose a password' : 'Password'}
+            secureTextEntry
+            value={password}
+            onChangeText={(t)=>{ setPassword(t); }}
+            style={{ borderWidth: 1, padding: 8, marginBottom: 8, backgroundColor: 'white' }}
+          />
+          {mode === 'signup' ? (
+            <Text style={{ color: '#374151', marginBottom: 4 }}>Please choose a password to create your account.</Text>
+          ) : null}
+          {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && passwordError ? (<Text style={{ color: 'red', marginBottom: 12 }}>{passwordError}</Text>) : null; })()}
+        </>
+      ) : null}
       {(() => { const { ENABLE_AUTH_VERIFICATION_INLINE } = getFlags(); return (ENABLE_AUTH_VERIFICATION_INLINE && unverified) ? (
         <View style={{ padding: 8, backgroundColor: '#f0f9ff', borderWidth: 1, borderColor: '#bae6fd', borderRadius: 6, marginBottom: 12 }}>
           <Text style={{ color: '#0369a1', marginBottom: 8 }}>Your email isn’t verified.</Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <Button title="Resend code" onPress={async () => { try { const { resendSignUpCode } = await import('aws-amplify/auth'); await resendSignUpCode({ username: unverified }); } catch {} }} />
-            <Button title="Enter code" onPress={() => navigation.navigate('VerifyCode', { email: unverified, password })} />
+            <Button title="Enter code" onPress={() => navigation.navigate('VerifyCode', { email: unverified, password })} color={theme.colors.primary} />
           </View>
         </View>
       ) : null; })()}
-      <View style={{ flexDirection: 'row', gap: 12 }}>
-        <View style={{ flex: 1 }}>
-          <Button title={signingIn ? 'Signing in…' : 'Sign In'} onPress={onSignIn} disabled={isSignedIn || signingIn || !isOnline} />
+      {mode === 'initial' ? (
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Button title="Sign In" onPress={() => { setMode('signin'); setError(null); }} disabled={!isOnline} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button title="Sign Up" onPress={() => { setMode('signup'); setError(null); }} disabled={!isOnline} />
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Button title={signingUp ? 'Signing up…' : 'Sign Up'} onPress={onSignUp} disabled={signingUp || !isOnline} />
-        </View>
-      </View>
+      ) : null}
 
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-start', marginTop: 12 }}>
-        <TouchableOpacity onPress={onForgotPassword}><Text style={{ color: '#0284c7', fontWeight: '600' }}>Forgot password?</Text></TouchableOpacity>
-      </View>
+      {mode === 'signin' ? (
+        <View style={{ marginTop: 8 }}>
+          <Button title={signingIn ? 'Entering…' : 'Enter'} onPress={onSignIn} disabled={isSignedIn || signingIn || !isOnline} color={theme.colors.primary} />
+        </View>
+      ) : null}
+
+      {mode === 'signup' ? (
+        <View style={{ marginTop: 8 }}>
+          <TouchableOpacity
+            onPress={onSignUp}
+            disabled={signingUp || !isOnline}
+            style={{
+              backgroundColor: '#F2EFEA',
+              padding: 10,
+              borderRadius: 6,
+              alignItems: 'center',
+              opacity: (signingUp || !isOnline) ? 0.6 : 1,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+            accessibilityLabel="Submit sign up"
+          >
+            <Text style={{ color: '#2F2F2F', fontWeight: '600' }}>{signingUp ? 'Submitting…' : 'Submit'}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {mode === 'signin' ? (
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-start', marginTop: 12 }}>
+          <TouchableOpacity onPress={onForgotPassword}><Text style={{ color: '#0284c7', fontWeight: '600' }}>Forgot password?</Text></TouchableOpacity>
+        </View>
+      ) : null}
 
       {isSignedIn ? (
         <View style={{ marginTop: 12 }}>
@@ -210,7 +266,7 @@ export default function AuthScreen({ navigation }: any) {
   const { ENABLE_AUTH_GRADIENT_BG } = getFlags();
   if (ENABLE_AUTH_GRADIENT_BG) {
     return (
-      <LinearGradient colors={["#E0F2FE", "#F0F9FF"]} style={{ flex: 1 }}>
+      <LinearGradient colors={["#FAF8F4", "#FFFFFF"]} style={{ flex: 1 }}>
         {Body}
       </LinearGradient>
     );

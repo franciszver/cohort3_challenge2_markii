@@ -84,8 +84,8 @@ export default function App() {
       <NavigationContainer ref={navRef}>
         <ErrorBoundary>
           <Stack.Navigator initialRouteName="Auth">
-            <Stack.Screen name="Auth" component={AuthScreen} />
-            <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} />
+            <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="VerifyCode" component={VerifyCodeScreen} options={{ title: 'Verify Code' }} />
             <Stack.Screen name="ForgotPasswordRequest" component={ForgotPasswordRequestScreen} />
             <Stack.Screen name="ForgotPasswordCode" component={ForgotPasswordCodeScreen} />
             <Stack.Screen name="ForgotPasswordNew" component={ForgotPasswordNewPasswordScreen} />

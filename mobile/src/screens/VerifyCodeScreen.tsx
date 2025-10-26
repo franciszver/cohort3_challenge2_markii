@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button } from 'react-native';
+import { useTheme } from '../utils/theme';
 import { confirmSignUp, signIn, resendSignUpCode } from 'aws-amplify/auth';
 
 export default function VerifyCodeScreen({ route, navigation }: any) {
+  const theme = useTheme();
   const initialEmail = (route?.params?.email as string | undefined) || '';
   const initialPassword = (route?.params?.password as string | undefined) || '';
   const [email, setEmail] = useState<string>(initialEmail);
@@ -59,10 +61,9 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
 
   return (
     <View style={{ flex: 1, padding: 16 }}>
-      <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Verify Code</Text>
       <TextInput placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
       <TextInput placeholder="Code" value={code} onChangeText={setCode} style={{ borderWidth: 1, padding: 8, marginBottom: 8 }} />
-      <Button title="Confirm" onPress={onConfirm} disabled={!email || !code} />
+      <Button title="Confirm" onPress={onConfirm} disabled={!email || !code} color={theme.colors.primary} />
       <View style={{ height: 8 }} />
       <Button title={isResending ? 'Resending…' : 'Resend Code'} onPress={onResend} disabled={!email || isResending} />
       {error ? <Text style={{ color: 'red', marginTop: 12 }}>{error}</Text> : null}
