@@ -10,7 +10,7 @@ import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
 import { updateLastSeen, subscribeUserPresence } from '../graphql/users';
-import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, listParticipantsForConversation, getConversation } from '../graphql/conversations';
+import { setMyLastRead, ensureDirectConversation, deleteConversationById, subscribeConversationDeleted, updateConversationLastMessage, getConversation } from '../graphql/conversations';
 import { showToast } from '../utils/toast';
 import { debounce } from '../utils/debounce';
 import { mergeDedupSort } from '../utils/messages';
@@ -18,7 +18,6 @@ import { generateLocalId } from '../utils/ids';
 import { getFlags } from '../utils/flags';
 import Constants from 'expo-constants';
 import { getUserProfile } from '../graphql/profile';
-import { getUserById, batchGetUsersCached, getEmailCacheSnapshot } from '../graphql/users';
 import Avatar from '../components/Avatar';
 import { useTheme } from '../utils/theme';
 
@@ -133,61 +132,32 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                     if (finalEmail) setMyEmail(finalEmail);
                 } catch {}
                 let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:init] me', me.userId, 'otherParam', otherUserId, 'cid', cid); } catch {}
 				if (!cid) throw new Error('No conversation target');
-                // Resolve other participant if not provided
+                // Resolve other participant if provided via route
                 let otherId = otherUserId as string | undefined;
+                // Load conversation metadata (name, group)
                 try {
-                    const partsRes: any = await listParticipantsForConversation(cid, 100);
-                    const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] list parts', { count: parts.length, ids: parts.map((p:any)=>p?.userId).filter(Boolean) }); } catch {}
-                    setParticipantIds(parts.map((p:any)=> p?.userId).filter(Boolean));
-                    if (!otherId) {
-                        const other = parts.find((p: any) => p?.userId && p.userId !== me.userId);
-                        if (other?.userId) otherId = other.userId;
-                    }
-                    // Prefetch all participant emails for labeling (merge with cache)
-                    try {
-                        const ids = Array.from(new Set(parts.map((p:any)=> p?.userId).filter(Boolean).concat(me.userId)));
-                        await ensureEmails(ids);
-                        const cachedMap = getEmailCacheSnapshot();
-                        setUserIdToEmail(prev => ({ ...cachedMap, ...prev }));
-                        try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] prefetch emails', { requested: ids.length, resolved: Object.keys(map).length }); } catch {}
-                    } catch {}
-                    // Load conversation metadata (name, group)
-                    try {
-                        const r: any = await getConversation(cid);
-                        const c = r?.data?.getConversation;
-                        if (c) { setConvName(c.name || ''); setIsGroup(!!c.isGroup); }
-                    } catch {}
+                    const r: any = await getConversation(cid);
+                    const c = r?.data?.getConversation;
+                    if (c) { setConvName(c.name || ''); setIsGroup(!!c.isGroup); }
                 } catch {}
                 setOtherUserResolved(otherId);
-                // Prefetch other participant's email for labeling
+                // Ensure I am a participant in this conversation to satisfy auth rules for message reads
                 try {
-                    if (otherId) {
-                        const urAny: any = await getUserById(otherId);
-                        const u = urAny?.data?.getUser;
-                        if (u?.email) setUserIdToEmail(prev => ({ ...prev, [otherId]: u.email }));
-                    }
-                } catch {}
+                    const { ensureParticipant } = await import('../graphql/conversations');
+                    await ensureParticipant(cid, me.userId, 'MEMBER');
+                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:participant] ensured', me.userId, 'in', cid); } catch {}
+                } catch { try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:participant] ensure failed (non-fatal)'); } catch {} }
+                // Prefetch other participant's email for labeling
+                // Removed: relying on metadata only
                 // Resolve other participant profile (flagged)
                 try {
                     const { ENABLE_PROFILES } = getFlags();
                     if (ENABLE_PROFILES && otherId) {
                         const r: any = await getUserProfile(otherId);
                         const p = r?.data?.getUserProfile;
-                        // Fallback to Users table for email if profile missing
-                        if (!p || (!p.firstName && !p.lastName && !p.email)) {
-                            try {
-                                const ur: any = await getUserById(otherId);
-                                const u = ur?.data?.getUser;
-                                if (p) setOtherProfile({ ...p, email: p.email || u?.email });
-                                else if (u) setOtherProfile({ userId: otherId, email: u.email });
-                            } catch {
-                                if (p) setOtherProfile(p);
-                            }
-                        } else {
-                            setOtherProfile(p);
-                        }
+                        if (p) setOtherProfile(p);
                     }
                 } catch {}
 				// Ensure direct conversation exists when entering from 1:1 flow
@@ -208,18 +178,23 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						setMessages(prev => {
 							const next = mergeDedupSort(prev, [m]);
 							AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
+						// Recompute active participants from latest 50 messages
+							try {
+							const latest = next.slice(0, 50);
+								const ids = Array.from(new Set(latest.map((mm:any) => mm.senderId).filter(Boolean)));
+								setParticipantIds(ids);
+							} catch {}
 							return next;
 						});
-                        // Update email map for sender on the fly
+                        // Update email map for sender on the fly (metadata only, no lookups)
                         try {
                             const sid = m?.senderId;
-                            if (sid && !userIdToEmail[sid]) {
-                                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] live fetch email for', sid); } catch {}
-                                const r: any = await getUserById(sid);
-                                const u = r?.data?.getUser;
-                                if (u?.email) setUserIdToEmail(prev => ({ ...prev, [sid]: u.email }));
-                                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] live fetched', { sid, hasEmail: !!u?.email }); } catch {}
-                            }
+                            // Prefer metadata.email when present
+                            try {
+                                const metaAny = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
+                                const em = (metaAny && typeof metaAny.email === 'string') ? metaAny.email.trim() : '';
+                                if (sid && em && !userIdToEmail[sid]) setUserIdToEmail(prev => ({ ...prev, [sid]: em }));
+                            } catch {}
                         } catch {}
                         // Calendar CTA (flag-gated) — if metadata missing in sub payload, refetch message once to get metadata
 						try {
@@ -344,11 +319,13 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						error: (_e: any) => {},
 				});
 				subRef.current = sub;
-				// hydrate from cache next
+                // hydrate from cache next
 				const cached = await AsyncStorage.getItem(`history:${cid}`);
 				if (cached) {
 					try {
-						setMessages(JSON.parse(cached));
+                        const arr = JSON.parse(cached);
+                        setMessages(arr);
+                        try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:cache] items', Array.isArray(arr) ? arr.length : 0); } catch {}
 						// ensure we show the latest message once on first load
 						if (!didInitialScrollRef.current) {
 							didInitialScrollRef.current = true;
@@ -356,41 +333,84 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						}
 					} catch {}
 				}
+                // Cross-check latest message via index for diagnostics
+                try { const { getLatestMessageInConversation } = await import('../graphql/messages'); const latest = await getLatestMessageInConversation(cid); try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:latestCheck]', latest ? { id: latest.id, createdAt: latest.createdAt } : 'none'); } catch {} } catch {}
 				// fetch history after subscription is active
-				let pageSize = 50;
+                let pageSize = 50;
 				let res: any = await listMessagesCompat(cid, pageSize);
 				let items = res.items as any[];
+				let syntheticUsed = false;
+                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:fetch] firstPage count', Array.isArray(items) ? items.length : 0, 'nextToken', res?.nextToken); } catch {}
 				// Freshness retries: handle eventual consistency right after first message
 				if (!items || items.length === 0) {
 					for (let i = 0; i < 3 && (!items || items.length === 0); i++) {
 						await new Promise(r => setTimeout(r, 300));
 						try { const again: any = await listMessagesCompat(cid, pageSize); items = again.items || []; res = again; } catch {}
+                        try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:fetch] retry', i+1, 'count', Array.isArray(items) ? items.length : 0); } catch {}
 					}
 				}
-				// Backfill all messages since my joinedAt, up to a sane cap
-				try {
-					const { getMyParticipantRecord } = await import('../graphql/conversations');
-					const meNow = await getCurrentUser();
-					const myPart: any = await getMyParticipantRecord(cid, meNow.userId);
-					const joinedAt = myPart?.joinedAt ? new Date(myPart.joinedAt).getTime() : undefined;
-					const cap = 200; // cap total backfill
-					let nextToken = res.nextToken;
-					while (nextToken && items.length < cap && joinedAt) {
-						const more: any = await listMessagesCompat(cid, pageSize, nextToken);
-						const older = (more.items || []) as any[];
-						items = items.concat(older);
-						nextToken = more.nextToken;
-						const oldest = items[items.length - 1];
-						if (oldest && new Date(oldest.createdAt).getTime() <= joinedAt) break;
+				// Final attempt: if still empty, try one more list with smaller limit to bust caches
+                if (!items || items.length === 0) {
+                    try { const alt: any = await listMessagesCompat(cid, 10); items = alt.items || []; res = alt; } catch {}
+                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:fetch] finalAttempt count', Array.isArray(items) ? items.length : 0); } catch {}
+                }
+                // Synthetic fallback: if still empty, use conversation.lastMessage for initial render
+                if (!items || items.length === 0) {
+                    try {
+                        const convRes: any = await getConversation(cid);
+                        const c = convRes?.data?.getConversation;
+                        if (c?.lastMessage && c?.lastMessageAt) {
+                            const synthetic = {
+                                id: `synthetic::${c.lastMessageAt}`,
+                                conversationId: cid,
+                                content: c.lastMessage,
+                                attachments: [],
+                                messageType: 'TEXT',
+                                senderId: c.lastMessageSender || 'unknown',
+                                metadata: null,
+                                createdAt: c.lastMessageAt,
+                                updatedAt: c.lastMessageAt,
+                            } as any;
+                            items = [synthetic];
+							syntheticUsed = true;
+                            try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:fetch] synthetic from conversation.lastMessage'); } catch {}
+                        }
+                    } catch {}
+                }
+				// Bounded backfill loop: if we only have synthetic or empty, retry list for a short window
+				if (syntheticUsed || !items || items.length === 0) {
+					const t0 = Date.now();
+					for (let i = 0; i < 8 && (syntheticUsed || !items || items.length === 0); i++) { // ~3.5s max
+						await new Promise(r => setTimeout(r, 450));
+						try {
+							const again: any = await listMessagesCompat(cid, pageSize);
+							const got = again.items || [];
+							try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:backfill] attempt', i+1, 'count', got.length); } catch {}
+							if (got.length > 0) { items = got; res = again; syntheticUsed = false; break; }
+						} catch {}
+						if (Date.now() - t0 > 3800) break;
 					}
-				} catch {}
+					try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:backfill]', syntheticUsed ? 'no-data' : 'success'); } catch {}
+				}
+                // Optional backfill disabled for simplicity; first page is sufficient for visibility
 				setNextToken(res.nextToken);
-                // Build user email map for labeling bubbles (merge with cache)
+                // Build user email map by harvesting metadata.email from fetched items
                 try {
-                    const uniqueIds = Array.from(new Set(items.map((m:any) => m.senderId).filter(Boolean)));
-                    await ensureEmails(uniqueIds);
-                    const cachedMap = getEmailCacheSnapshot();
-                    setUserIdToEmail(prev => ({ ...cachedMap, ...prev, ...(myEmail ? { [me.userId]: myEmail } : {}) }));
+                    const metaMap: Record<string, string> = {};
+                    for (const it of items) {
+                        try {
+                            const meta = (() => { try { return typeof it.metadata === 'string' ? JSON.parse(it.metadata) : (it.metadata || {}); } catch { return {}; } })();
+                            const em = (meta && typeof meta.email === 'string') ? meta.email.trim() : '';
+                            if (it.senderId && em) metaMap[it.senderId] = em;
+                        } catch {}
+                    }
+                    if (Object.keys(metaMap).length) setUserIdToEmail(prev => ({ ...prev, ...metaMap }));
+                } catch {}
+                // Compute active participants from latest 50 messages
+                try {
+                    const latest = (items || []).slice(0, 50);
+                    const ids = Array.from(new Set(latest.map((mm:any) => mm.senderId).filter(Boolean)));
+                    setParticipantIds(ids);
                 } catch {}
 				// Decorate with basic status icon based on receipts for 1:1
 				const decorated = await Promise.all(items.map(async (m: any) => {
@@ -421,6 +441,14 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					for (const m of items) {
 						if (m.senderId !== me.userId) {
 							await markDelivered(m.id, me.userId);
+						}
+					}
+				} catch {}
+				// mark read for all fetched messages not sent by me (on open)
+				try {
+					for (const m of items) {
+						if (m.senderId !== me.userId) {
+							await markRead(m.id, me.userId);
 						}
 					}
 				} catch {}
@@ -468,13 +496,23 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					const outboxRaw = await AsyncStorage.getItem(`outbox:${cid}`);
 					const outbox = outboxRaw ? JSON.parse(outboxRaw) : [];
 					const remaining: any[] = [];
+					const resolveEmail = async () => {
+						try { if (myEmail) return myEmail; } catch {}
+						try {
+							const session: any = await fetchAuthSession();
+							const claims: any = session?.tokens?.idToken?.payload || {};
+							const tokenEmail = (claims?.email || '').trim();
+							return tokenEmail || '';
+						} catch { return ''; }
+					};
 					for (const job of outbox) {
 						const attempts = job.attempts || 0;
 						try {
+							const emailToSend = await resolveEmail();
 							if (job.type === 'image' && job.imageUrl) {
-								await sendTextMessageCompat(cid, `[image] ${job.imageUrl}`, me.userId);
+								await sendTextMessageCompat(cid, `[image] ${job.imageUrl}`, me.userId, emailToSend);
 							} else if (job.content) {
-								await sendTextMessageCompat(cid, job.content, me.userId);
+								await sendTextMessageCompat(cid, job.content, me.userId, emailToSend);
 							}
 						} catch {
 							job.attempts = attempts + 1;
@@ -563,11 +601,26 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 								const page: any = await listMessagesCompat(cidNow, 25);
 								const newer = page.items || [];
 								setNextToken(page.nextToken);
-								setMessages(prev => {
-									const merged = mergeDedupSort(prev, newer);
-									AsyncStorage.setItem(`history:${cidNow}`, JSON.stringify(merged)).catch(() => {});
-									return merged;
-								});
+					setMessages(prev => {
+						const merged = mergeDedupSort(prev, newer);
+						AsyncStorage.setItem(`history:${cidNow}`, JSON.stringify(merged)).catch(() => {});
+						// Rebuild active participants from latest 50
+						try {
+							const latest = merged.slice(0, 50);
+							const ids = Array.from(new Set(latest.map((mm:any) => mm.senderId).filter(Boolean)));
+							setParticipantIds(ids);
+						} catch {}
+						return merged;
+					});
+						// Mark delivered & read for page items not sent by me (on focus refresh)
+						try {
+							for (const m of newer) {
+								if (m.senderId !== me.userId) {
+									await markDelivered(m.id, me.userId);
+									await markRead(m.id, me.userId);
+								}
+							}
+						} catch {}
 								// Ensure emails for any senders in this latest page
 								try { await ensureEmails(newer.map((m:any)=>m.senderId).filter(Boolean)); } catch {}
 							} catch {}
@@ -586,18 +639,32 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			if (!trimmed) { return; }
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
-			// Guard: ensure participant records exist before first send
+			// Pre-send barrier: ensure participant records exist so recipients can read immediately
 			try {
-				const { listParticipantsForConversation } = await import('../graphql/conversations');
-				const start = Date.now();
-				while (Date.now() - start < 1500) {
+				const { listParticipantsForConversation, ensureParticipant } = await import('../graphql/conversations');
+				try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:barrier] start', { cid }); } catch {}
+				// Ensure me; if a direct chat, also ensure the other participant
+				try { await ensureParticipant(cid, me.userId, 'MEMBER'); try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:barrier] ensured self'); } catch {} } catch {}
+				try {
+					const target = otherUserResolved || otherUserId;
+					if (target) { await ensureParticipant(cid, target, 'MEMBER'); try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:barrier] ensured other', { target }); } catch {} }
+				} catch {}
+				const t0 = Date.now();
+				let count = 0;
+				for (let i = 0; i < 6; i++) { // ~1.2s max
 					try {
 						const r: any = await listParticipantsForConversation(cid, 100);
 						const items = r?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-						if (Array.isArray(items) && items.length >= 2) break;
+						count = items.length || 0;
+						if (count >= 2) break;
 					} catch {}
 					await new Promise(res => setTimeout(res, 200));
 				}
+				const elapsed = Date.now() - t0;
+				try {
+					const { DEBUG_LOGS } = getFlags();
+					if (DEBUG_LOGS) console.log(count >= 2 ? '[send:barrier] ok' : '[send:barrier] timeout', { count, ms: elapsed });
+				} catch {}
 			} catch {}
 			const localId = generateLocalId('msg');
             // quiet start
@@ -609,6 +676,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				content: trimmed,
 				messageType: 'TEXT',
 				_localStatus: 'PENDING',
+                metadata: JSON.stringify({ email: myEmail || '' }),
 			};
 			setMessages(prev => {
 				// Dedup by id in case rapid sends race
@@ -617,12 +685,14 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			});
 			setInput('');
 			setIsSendingMsg(true);
-			try {
-				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
+            try {
+                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:attempt]', { conversationId: cid, userId: me.userId, hasEmail: !!(myEmail||'') }); } catch {}
+                const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId, myEmail || '');
+                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:ok]', { id: saved?.id, createdAt: saved?.createdAt }); } catch {}
 				// Opportunistic presence update on outbound send
 				try { await updateLastSeen(me.userId); } catch {}
 				// Update conversation preview so the list shows latest text
-				try { const when = new Date().toISOString(); await updateConversationLastMessage(cid, optimistic.content, when); } catch {}
+                try { const when = new Date().toISOString(); await updateConversationLastMessage(cid, optimistic.content, when, me.userId); } catch {}
 				setMessages(prev => {
 					const replaced = prev.map(m => (m.id === localId ? saved : m));
 					// Guard against duplicate ids when backend echoes a message with same id
@@ -632,11 +702,12 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					return dedup;
 				});
                 // quiet ok
-			} catch (sendErr: any) {
+            } catch (sendErr: any) {
                 // quiet error logs
 				try {
 					const errMsg = (sendErr?.errors?.[0]?.message) || sendErr?.message || 'Send failed';
 					setError(errMsg);
+                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:err]', errMsg); } catch {}
 				} catch {}
 				const key = `outbox:${cid}`;
 				const raw = await AsyncStorage.getItem(key);
@@ -842,6 +913,12 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					setMessages(prev => {
 						const next = mergeDedupSort(prev, older);
 						AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
+						// Recompute active participants from latest 50
+						try {
+							const latest = next.slice(0, 50);
+							const ids = Array.from(new Set(latest.map((mm:any) => mm.senderId).filter(Boolean)));
+							setParticipantIds(ids);
+						} catch {}
 						return next;
 					});
 					} catch {}
@@ -887,11 +964,10 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 									{item.__status === 'read' ? <Text style={{ color: theme.colors.primary }}>✓✓</Text> : null}
 								</Text>
                                             {(() => {
-                                                const email = item.senderId === myId
-                                                    ? (myEmail || userIdToEmail[myId] || '')
-                                                    : (userIdToEmail[item.senderId] || '');
+                                                const isMe = item.senderId === myId;
+                                                const label = isMe ? 'you' : (userIdToEmail[item.senderId] || '');
                                                 const edited = item.editedAt ? ' · edited' : '';
-                                                const suffix = email ? ` · ${email}` : '';
+                                                const suffix = label ? ` · ${label}` : '';
                                                 return (
                                                     <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }} numberOfLines={1}>
                                                         {formatTimestamp(item.createdAt)}{edited}{suffix}
@@ -919,7 +995,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			<Modal visible={participantsVisible} transparent animationType="fade" onRequestClose={() => setParticipantsVisible(false)}>
 				<View style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', alignItems: 'center' }}>
 					<View style={{ backgroundColor: theme.colors.modal, padding: theme.spacing.lg, borderRadius: theme.radii.lg, width: '85%' }}>
-						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Participants</Text>
+						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Active Participant list</Text>
 						{(() => {
 							const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
 							return ids.map((uid) => {
@@ -1045,3 +1121,4 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 		</View>
 	);
 }
+

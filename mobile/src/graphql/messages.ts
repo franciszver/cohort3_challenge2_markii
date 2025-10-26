@@ -61,11 +61,13 @@ export async function listMessagesByConversation(
       }
     }
   `;
-  return getClient().graphql({
+  const res = await getClient().graphql({
     query,
     variables: { conversationId, limit, nextToken, sortDirection: 'DESC' },
     authMode: 'userPool',
   });
+  try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[messages:rootQuery]', { conversationId, limit, got: (res as any)?.data?.messagesByConversationIdAndCreatedAt?.items?.length || 0 }); } catch {}
+  return res;
 }
 
 export async function getLatestMessageInConversation(conversationId: string) {
@@ -95,7 +97,8 @@ export async function getMessageById(id: string) {
 export async function createTextMessage(
   conversationId: string,
   content: string,
-  senderId: string
+  senderId: string,
+  senderEmail?: string
 ) {
   const mutation = /* GraphQL */ `
     mutation CreateMessage($input: CreateMessageInput!) {
@@ -118,8 +121,17 @@ export async function createTextMessage(
     senderId,
     messageType: 'TEXT',
     createdAt: new Date().toISOString(),
+    // Attach sender email in metadata for downstream rendering and participant derivation
+    metadata: JSON.stringify({ email: senderEmail || '' }),
   } as const;
-  return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+  try {
+    const res = await getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
+    try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:createMessage]', { conversationId, senderId, hasEmail: !!senderEmail, id: (res as any)?.data?.createMessage?.id }); } catch {}
+    return res;
+  } catch (e) {
+    try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[send:createMessage:error]', String((e as any)?.message || e)); } catch {}
+    throw e;
+  }
 }
 
 export function subscribeMessagesInConversation(conversationId: string) {
@@ -293,6 +305,38 @@ async function listMessagesByFilter(
   });
 }
 
+async function syncMessagesByFilter(
+  conversationId: string,
+  limit = 25,
+  nextToken?: string
+) {
+  const query = /* GraphQL */ `
+    query SyncMessagesByFilter($conversationId: String!, $limit: Int, $nextToken: String) {
+      syncMessages(filter: { conversationId: { eq: $conversationId } }, limit: $limit, nextToken: $nextToken) {
+        items {
+          id
+          conversationId
+          content
+          attachments
+          messageType
+          senderId
+          metadata
+          createdAt
+          updatedAt
+        }
+        nextToken
+      }
+    }
+  `;
+  const res = await getClient().graphql({
+    query,
+    variables: { conversationId, limit, nextToken },
+    authMode: 'userPool',
+  });
+  try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[messages:syncFallback]', { conversationId, got: (res as any)?.data?.syncMessages?.items?.length || 0 }); } catch {}
+  return res;
+}
+
 async function listMessagesVtl(
   conversationId: string,
   limit = 25,
@@ -362,6 +406,35 @@ export async function listMessagesCompat(
     }
     const page = res?.data?.messagesByConversationIdAndCreatedAt;
     if (!page || !page.items) throw new Error('root listMessages unavailable');
+    // If root index returns empty unexpectedly, fall back to generic list with filter/sync, then VTL as last resort
+    if ((!page.items || page.items.length === 0) && !nextToken) {
+      try {
+        const alt: any = await listMessagesByFilter(conversationId, limit, nextToken);
+        const p2 = alt?.data?.listMessages;
+        if (p2 && Array.isArray(p2.items) && p2.items.length) {
+          try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[messages:fallback] filter returned', p2.items.length, 'for', conversationId); } catch {}
+          return { items: p2.items, nextToken: p2.nextToken };
+        }
+        // Try syncMessages as a final safety net
+        try {
+          const alt2: any = await syncMessagesByFilter(conversationId, limit, nextToken);
+          const p3 = alt2?.data?.syncMessages;
+          if (p3 && Array.isArray(p3.items) && p3.items.length) {
+            return { items: p3.items, nextToken: p3.nextToken };
+          }
+        } catch {}
+        // Finally, legacy VTL shape
+        try {
+          const legacy: any = await listMessagesVtl(conversationId, limit, nextToken);
+          const pageLegacy = legacy?.data?.listMessages;
+          const itemsLegacy = (pageLegacy?.items || []).map(mapVtlMessageToRootShape);
+          if (itemsLegacy.length) {
+            try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[messages:fallback] vtl returned', itemsLegacy.length, 'for', conversationId); } catch {}
+            return { items: itemsLegacy, nextToken: pageLegacy?.nextToken };
+          }
+        } catch {}
+      } catch {}
+    }
     return { items: page.items, nextToken: page.nextToken };
   } catch (e) {
     
@@ -378,7 +451,7 @@ export async function listMessagesCompat(
     } catch (ge) {
       
     }
-    // Finally try legacy VTL API shape if present
+    // Finally try legacy VTL API shape if present (catch block)
     try {
       const res: any = await listMessagesVtl(conversationId, limit, nextToken);
       if (res?.errors?.length) {
@@ -396,10 +469,11 @@ export async function listMessagesCompat(
 export async function sendTextMessageCompat(
   conversationId: string,
   content: string,
-  senderId: string
+  senderId: string,
+  senderEmail?: string
 ) {
   try {
-    const res: any = await createTextMessage(conversationId, content, senderId);
+    const res: any = await createTextMessage(conversationId, content, senderId, senderEmail);
     const msg = res?.data?.createMessage;
     if (!msg) throw new Error('root send unavailable');
     return msg;

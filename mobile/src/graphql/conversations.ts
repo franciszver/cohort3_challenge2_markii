@@ -23,11 +23,13 @@ export async function createConversation(name: string | undefined, isGroup: bool
   // Ensure participants array is populated for discovery on receivers
   input.participants = participantIds;
   const convRes: any = await getClient().graphql({ query: createConv, variables: { input }, authMode: 'userPool' });
+  try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[conv:create]', { id: (convRes as any)?.data?.createConversation?.id, isGroup, name, participants: participantIds.length }); } catch {}
   const conv = convRes?.data?.createConversation;
   if (!conv?.id) throw new Error('Conversation create failed');
   // Add participants (including creator)
   for (const uid of participantIds) {
-    await getClient().graphql({ query: createParticipant, variables: { input: { conversationId: conv.id, userId: uid, joinedAt: new Date().toISOString(), role: uid === meId ? 'ADMIN' : 'MEMBER' } }, authMode: 'userPool' });
+    const pr = await getClient().graphql({ query: createParticipant, variables: { input: { conversationId: conv.id, userId: uid, joinedAt: new Date().toISOString(), role: uid === meId ? 'ADMIN' : 'MEMBER' } }, authMode: 'userPool' });
+    try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[conv:addParticipant]', { conversationId: conv.id, userId: uid, ok: !!(pr as any)?.data?.createConversationParticipant?.id }); } catch {}
   }
   return conv;
 }
@@ -58,7 +60,7 @@ export async function listConversationsByParticipant(userId: string, limit = 50,
 
 export async function getConversation(id: string) {
   const query = /* GraphQL */ `
-    query GetConversation($id: ID!) { getConversation(id: $id) { id name isGroup createdBy createdAt updatedAt } }
+    query GetConversation($id: ID!) { getConversation(id: $id) { id name isGroup createdBy createdAt updatedAt lastMessage lastMessageAt lastMessageSender } }
   `;
   return getClient().graphql({ query, variables: { id }, authMode: 'userPool' });
 }
@@ -156,14 +158,15 @@ export function subscribeConversationDeleted(conversationId: string) {
   return op.subscribe.bind(op);
 }
 
-export async function updateConversationLastMessage(conversationId: string, preview: string, whenISO?: string) {
+export async function updateConversationLastMessage(conversationId: string, preview: string, whenISO?: string, senderId?: string) {
   const mutation = /* GraphQL */ `
     mutation UpdateConversation($input: UpdateConversationInput!) {
-      updateConversation(input: $input) { id lastMessage lastMessageAt updatedAt }
+      updateConversation(input: $input) { id lastMessage lastMessageAt lastMessageSender updatedAt }
     }
   `;
   const input: any = { id: conversationId, lastMessage: preview };
   if (whenISO) input.lastMessageAt = whenISO;
+  if (senderId) input.lastMessageSender = senderId;
   return getClient().graphql({ query: mutation, variables: { input }, authMode: 'userPool' });
 }
 

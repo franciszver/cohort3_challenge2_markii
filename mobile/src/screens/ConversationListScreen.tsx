@@ -496,7 +496,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
           <RefreshControl refreshing={refreshing} onRefresh={async () => { try { setRefreshing(true); await load(true); } catch {} finally { setRefreshing(false); } }} />
         ) : undefined; } catch { return undefined; } })()}
         renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => { setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; }); navigation.navigate('Chat', { conversationId: item.id }); }}>
+          <TouchableOpacity onPress={() => { setItems(prev => { const next = prev.map((c:any)=> c.id === item.id ? { ...c, _unread: 0 } : c); try { if (ENABLE_UNREAD_BADGE) Notifications.setBadgeCountAsync?.(next.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) as any); } catch {}; return next; }); try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[nav:openChat]', { conversationId: item.id }); } catch {}; navigation.navigate('Chat', { conversationId: item.id }); }}>
             <View style={{ paddingVertical: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 8, minHeight: 64 }}>
           {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
             <View style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', flexDirection: 'row' }}>
