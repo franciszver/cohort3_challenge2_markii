@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, TouchableWithoutFeedback, Modal, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, TouchableWithoutFeedback, Modal, Alert, ActivityIndicator, ScrollView, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
@@ -19,6 +19,8 @@ import { getFlags } from '../utils/flags';
 import Constants from 'expo-constants';
 import { useTheme } from '../utils/theme';
 import { preloadNicknames, setNickname as setNicknameUtil, getAllNicknames } from '../utils/nicknames';
+import CalendarConsentModal from '../components/CalendarConsentModal';
+import { getCalendarConsent, getAllCalendarEvents, detectLocalConflicts, formatConflictsMessage, hasSchedulingKeywords, hasCalendarPermissions } from '../utils/calendar';
 
 function conversationIdFor(a: string, b: string) {
 	return [a, b].sort().join('#');
@@ -94,6 +96,11 @@ const [nicknameVisible, setNicknameVisible] = useState(false);
 const [nicknameInput, setNicknameInput] = useState('');
 const [nicknameTargetId, setNicknameTargetId] = useState<string | null>(null);
 const [nicknames, setNicknames] = useState<Record<string, string>>({});
+// Calendar consent modal state
+const [calendarConsentVisible, setCalendarConsentVisible] = useState(false);
+const [calendarConsentChoice, setCalendarConsentChoice] = useState<'full' | 'local' | 'none'>('none');
+const [showCalendarBanner, setShowCalendarBanner] = useState(false);
+const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
 
 	// Load nicknames from AsyncStorage
 	async function loadNicknames() {
@@ -655,6 +662,39 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 		};
 	}, []);
 
+	// Load calendar consent and check if banner should be shown
+	useEffect(() => {
+		(async () => {
+			try {
+				const { ASSISTANT_CALENDAR_READ_ENABLED } = getFlags();
+				if (!ASSISTANT_CALENDAR_READ_ENABLED) return;
+
+				// Check if this is an assistant conversation
+				const isAssistantConvo = (providedConversationId || conversationId || '').startsWith('assistant::');
+				if (!isAssistantConvo) return;
+
+				// Load consent choice
+				const consent = await getCalendarConsent();
+				setCalendarConsentChoice(consent);
+
+				// Show banner if consent is none or permissions denied
+				if (consent === 'none') {
+					setShowCalendarBanner(true);
+				} else if (consent === 'full' || consent === 'local') {
+					// Check if OS permissions are still granted
+					const hasPerms = await hasCalendarPermissions();
+					if (!hasPerms) {
+						setShowCalendarBanner(true);
+					} else {
+						setShowCalendarBanner(false);
+					}
+				}
+			} catch (error) {
+				console.warn('[calendar] Failed to load consent:', error);
+			}
+		})();
+	}, [providedConversationId, conversationId]);
+
 	// Track participant count transitions and show system message when moving to multi-user
 	useEffect(() => {
 		const currentCount = participantIds.length;
@@ -872,7 +912,46 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
                                 jwt = session?.tokens?.idToken?.toString?.() || session?.tokens?.idToken?.toString?.call(session.tokens.idToken);
                             } catch {}
                             const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
-                            const body = { ...req, ...(jwt ? { jwt } : {}), ...(tz ? { tz } : {}) } as any;
+                            
+                            // Calendar reading (feature-gated)
+                            let calendarEvents: any[] | undefined = undefined;
+                            try {
+                                const { ASSISTANT_CALENDAR_READ_ENABLED } = getFlags();
+                                if (ASSISTANT_CALENDAR_READ_ENABLED) {
+                                    const consent = await getCalendarConsent();
+                                    
+                                    if (consent === 'full' || consent === 'local') {
+                                        // Read calendar events (next 14 days)
+                                        const events = await getAllCalendarEvents(14);
+                                        
+                                        if (consent === 'full') {
+                                            // Send to backend
+                                            calendarEvents = events;
+                                            if (DEBUG_LOGS) {
+                                                console.log('[calendar] Sending', events.length, 'events to backend');
+                                            }
+                                        } else if (consent === 'local') {
+                                            // Local conflict detection only
+                                            if (DEBUG_LOGS) {
+                                                console.log('[calendar] Local-only mode, checking conflicts for', events.length, 'events');
+                                            }
+                                            // Will be processed after assistant replies with events
+                                            // Store in AsyncStorage for later conflict detection
+                                            try {
+                                                await AsyncStorage.setItem(`calendar:events:${cid}`, JSON.stringify(events));
+                                            } catch {}
+                                        }
+                                    }
+                                }
+                            } catch (calError) {
+                                console.warn('[calendar] Failed to read calendar:', calError);
+                                // Continue without calendar data
+                            }
+                            
+                            const body = { ...req, ...(jwt ? { jwt } : {}), ...(tz ? { tz } : {}), ...(calendarEvents ? { calendarEvents } : {}) } as any;
+                            if (DEBUG_LOGS) {
+                                console.log('[assistant] Request body has calendarEvents:', !!calendarEvents, 'count:', calendarEvents?.length || 0);
+                            }
                             const res = await fetch(`${base}/agent/weekend-plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                             // soft log network status in UI footer if non-200
                             if (!res.ok) {
@@ -1152,6 +1231,27 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
                         >
                             <Text style={{ color: theme.colors.textPrimary }}>Rename Conversation</Text>
                         </TouchableOpacity>
+                        {(() => {
+                            try {
+                                const { ASSISTANT_CALENDAR_READ_ENABLED } = getFlags();
+                                const isAssistantConvo = (providedConversationId || '').startsWith('assistant::');
+                                return ASSISTANT_CALENDAR_READ_ENABLED && isAssistantConvo;
+                            } catch {
+                                return false;
+                            }
+                        })() ? (
+                            <TouchableOpacity
+                                onPress={async () => {
+                                    setMenuVisible(false);
+                                    // Show consent modal to change settings
+                                    setCalendarConsentVisible(true);
+                                }}
+                                style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                                accessibilityLabel="Calendar settings"
+                            >
+                                <Text style={{ color: theme.colors.textPrimary }}>📅 Calendar Settings</Text>
+                            </TouchableOpacity>
+                        ) : null}
                         <TouchableOpacity
                             onPress={async () => {
                                 setMenuVisible(false);
@@ -1548,6 +1648,59 @@ const [nicknames, setNicknames] = useState<Record<string, string>>({});
 					</View>
 				</View>
 			</Modal>
+			
+			{/* Calendar consent modal */}
+			<CalendarConsentModal 
+				visible={calendarConsentVisible}
+				onClose={() => setCalendarConsentVisible(false)}
+				onConsentGiven={async (consent) => {
+					setCalendarConsentChoice(consent);
+					// Update banner visibility
+					if (consent === 'none') {
+						setShowCalendarBanner(true);
+					} else {
+						const hasPerms = await hasCalendarPermissions();
+						setShowCalendarBanner(!hasPerms);
+					}
+				}}
+			/>
+			
+			{/* Calendar disabled banner */}
+			{showCalendarBanner && (
+				<TouchableOpacity
+					onPress={async () => {
+						// Check if OS permissions are denied
+						const hasPerms = await hasCalendarPermissions();
+						if (!hasPerms && (calendarConsentChoice === 'full' || calendarConsentChoice === 'local')) {
+							// OS permissions denied, open settings
+							try {
+								await Linking.openSettings();
+							} catch (e) {
+								console.warn('[calendar] Failed to open settings:', e);
+								showToast('Please enable calendar permissions in Settings');
+							}
+						} else {
+							// Show consent modal
+							setCalendarConsentVisible(true);
+						}
+					}}
+					style={{
+						backgroundColor: theme.colors.primary + '20',
+						padding: theme.spacing.sm,
+						borderBottomWidth: 1,
+						borderBottomColor: theme.colors.border,
+						flexDirection: 'row',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+					}}
+				>
+					<Text style={{ color: theme.colors.primary, fontSize: 13, flex: 1 }}>
+						📅 Calendar access disabled - Tap to enable for conflict detection
+					</Text>
+					<Text style={{ color: theme.colors.primary, fontSize: 18 }}>›</Text>
+				</TouchableOpacity>
+			)}
+			
 			{error ? <Text style={{ color: theme.colors.danger }}>{error}</Text> : null}
 			<View style={{ flexDirection: 'row', padding: theme.spacing.sm, gap: theme.spacing.sm, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
 				<TextInput

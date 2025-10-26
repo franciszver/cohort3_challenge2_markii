@@ -29,6 +29,7 @@ type Flags = {
   // Assistant MVP flags
   ASSISTANT_ENABLED: boolean;
   ASSISTANT_CALENDAR_ENABLED: boolean;
+  ASSISTANT_CALENDAR_READ_ENABLED: boolean;
   ASSISTANT_DECISIONS_ENABLED: boolean;
   ASSISTANT_PRIORITY_ENABLED: boolean;
   ASSISTANT_RSVP_ENABLED: boolean;
@@ -43,7 +44,7 @@ export function getFlags(): Flags {
   if (_flags) return _flags;
   const extra: any = Constants.expoConfig?.extra || (Constants as any).manifest?.extra || {};
   _flags = {
-    DEBUG_LOGS: toBool(extra.DEBUG_LOGS, false),
+    DEBUG_LOGS: toBool(extra.DEBUG_LOGS, true),
     ENABLE_INTROSPECTION: toBool(extra.ENABLE_INTROSPECTION, false),
     ENABLE_PROFILES: toBool(extra.ENABLE_PROFILES, false),
     ENABLE_CONVERSATION_LIST_UX: toBool(extra.ENABLE_CONVERSATION_LIST_UX, false),
@@ -69,6 +70,7 @@ export function getFlags(): Flags {
     NOTIFY_RATE_LIMIT_PER_MINUTE: toNum(extra.NOTIFY_RATE_LIMIT_PER_MINUTE, 10),
     ASSISTANT_ENABLED: toBool(extra.ASSISTANT_ENABLED, false),
     ASSISTANT_CALENDAR_ENABLED: toBool(extra.ASSISTANT_CALENDAR_ENABLED, false),
+    ASSISTANT_CALENDAR_READ_ENABLED: toBool(extra.ASSISTANT_CALENDAR_READ_ENABLED, false),
     ASSISTANT_DECISIONS_ENABLED: toBool(extra.ASSISTANT_DECISIONS_ENABLED, false),
     ASSISTANT_PRIORITY_ENABLED: toBool(extra.ASSISTANT_PRIORITY_ENABLED, false),
     ASSISTANT_RSVP_ENABLED: toBool(extra.ASSISTANT_RSVP_ENABLED, false),

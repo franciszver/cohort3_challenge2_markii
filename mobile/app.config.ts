@@ -19,6 +19,12 @@ const config: ExpoConfig = {
     },
     permissions: ['READ_CALENDAR', 'WRITE_CALENDAR'],
   },
+  ios: {
+    infoPlist: {
+      NSCalendarsUsageDescription: 'The Assistant can check your calendar for conflicts when planning events. You control whether this data is shared.',
+      NSCalendarsFullAccessUsageDescription: 'The Assistant can check your calendar for conflicts when planning events. You control whether this data is shared.',
+    },
+  },
   web: {
     favicon: './assets/favicon.png',
   },
@@ -44,6 +50,7 @@ const config: ExpoConfig = {
     ASSISTANT_ENABLED: process.env.ASSISTANT_ENABLED ?? 'false',
     ASSISTANT_ENDPOINT: process.env.ASSISTANT_ENDPOINT ?? '',
     ASSISTANT_CALENDAR_ENABLED: process.env.ASSISTANT_CALENDAR_ENABLED ?? 'false',
+    ASSISTANT_CALENDAR_READ_ENABLED: process.env.ASSISTANT_CALENDAR_READ_ENABLED ?? 'false',
     ASSISTANT_DECISIONS_ENABLED: process.env.ASSISTANT_DECISIONS_ENABLED ?? 'false',
     ASSISTANT_PRIORITY_ENABLED: process.env.ASSISTANT_PRIORITY_ENABLED ?? 'false',
     ASSISTANT_RSVP_ENABLED: process.env.ASSISTANT_RSVP_ENABLED ?? 'false',

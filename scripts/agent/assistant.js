@@ -682,8 +682,8 @@ exports.handler = async (event) => {
     } else {
       body = event || {};
     }
-    const { requestId, conversationId, userId, text, jwt, tz } = body || {};
-    console.log('[assistant] payload:', { requestId, conversationId, userId, textLen: (text||'').length, hasJwt: !!jwt, tz });
+    const { requestId, conversationId, userId, text, jwt, tz, calendarEvents } = body || {};
+    console.log('[assistant] payload:', { requestId, conversationId, userId, textLen: (text||'').length, hasJwt: !!jwt, tz, calendarEventsCount: Array.isArray(calendarEvents) ? calendarEvents.length : 0 });
 
     if (!conversationId || !userId) {
       return respond(isHttp, 400, { ok: false, error: 'Missing conversationId or userId' });
@@ -701,7 +701,27 @@ exports.handler = async (event) => {
     const ASSISTANT_RECIPE_ENABLED = getEnvBool('ASSISTANT_RECIPE_ENABLED', false);
     const ASSISTANT_DECISIONS_ENABLED = getEnvBool('ASSISTANT_DECISIONS_ENABLED', false);
     const ASSISTANT_CONFLICTS_ENABLED = getEnvBool('ASSISTANT_CONFLICTS_ENABLED', false);
+    const ASSISTANT_CALENDAR_CONFLICTS_ENABLED = getEnvBool('ASSISTANT_CALENDAR_CONFLICTS_ENABLED', false);
     const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini');
+    
+    // Validate and sanitize calendar events
+    let validatedCalendarEvents = [];
+    if (ASSISTANT_CALENDAR_CONFLICTS_ENABLED && Array.isArray(calendarEvents)) {
+      try {
+        for (const evt of calendarEvents) {
+          if (evt && typeof evt === 'object' && evt.startISO && evt.endISO) {
+            const start = new Date(evt.startISO).getTime();
+            const end = new Date(evt.endISO).getTime();
+            if (Number.isFinite(start) && Number.isFinite(end) && start < end) {
+              validatedCalendarEvents.push({ startISO: evt.startISO, endISO: evt.endISO });
+            }
+          }
+        }
+        console.log('[calendar] Validated', validatedCalendarEvents.length, 'events from', calendarEvents.length, 'received');
+      } catch (e) {
+        console.warn('[calendar] Validation failed:', e?.message || e);
+      }
+    }
 
     // Single tool: get recent messages
     let recent = [];
@@ -1245,9 +1265,26 @@ exports.handler = async (event) => {
             content: [
               'You are a concise planning assistant. Output ONLY compact JSON with keys: text (string), optional events (array of { title, startISO, endISO, notes? }).',
               'Use user preferences if present. Keep under 120 words. Do not include markdown. Times must be ISO8601.',
-            ].join(' '),
+              ASSISTANT_CALENDAR_CONFLICTS_ENABLED && validatedCalendarEvents.length ? 'Avoid suggesting times that overlap with the user\'s existing calendar slots.' : '',
+            ].filter(Boolean).join(' '),
           };
-          const userMsg = { role: 'user', content: `Preferences: ${JSON.stringify(prefs||{})}. User timezone: ${tz || 'unknown'}. Latest user input: ${String(lastUserMessage||'').slice(0,500)}.` };
+          // Build calendar context for OpenAI
+          let calendarContext = '';
+          if (ASSISTANT_CALENDAR_CONFLICTS_ENABLED && validatedCalendarEvents.length) {
+            const slots = validatedCalendarEvents.slice(0, 20).map(e => {
+              try {
+                const start = new Date(e.startISO);
+                const end = new Date(e.endISO);
+                return `${start.toISOString().slice(0, 16)} to ${end.toISOString().slice(0, 16)}`;
+              } catch {
+                return null;
+              }
+            }).filter(Boolean);
+            if (slots.length) {
+              calendarContext = ` User's calendar has ${validatedCalendarEvents.length} occupied slots in next 14 days, including: ${slots.slice(0, 5).join('; ')}.`;
+            }
+          }
+          const userMsg = { role: 'user', content: `Preferences: ${JSON.stringify(prefs||{})}. User timezone: ${tz || 'unknown'}. ${calendarContext} Latest user input: ${String(lastUserMessage||'').slice(0,500)}.` };
           const messages = [sys, ...convo.reverse(), userMsg];
           const res = await callOpenAIJson({ model: OPENAI_MODEL, messages, timeoutMs: 6000, apiKey: key });
           if (res?.ok && typeof res.content === 'string' && res.content.trim()) {
@@ -1280,23 +1317,30 @@ exports.handler = async (event) => {
                   }
                 } catch {}
               }
-              // Optional conflicts detection against prior assistant events
+              // Optional conflicts detection against prior assistant events + device calendar
               let conflictsMeta = undefined; let conflictsAttach = undefined;
               if (ASSISTANT_CONFLICTS_ENABLED && Array.isArray(events) && events.length) {
                 try {
                   const prior = [];
+                  // Include assistant events from recent messages
                   for (const m of (recent || [])) {
                     try {
                       const metaPrev = toObjectJson(m?.metadata);
-                      if (Array.isArray(metaPrev?.events)) { prior.push(...metaPrev.events); }
+                      if (Array.isArray(metaPrev?.events)) { prior.push(...metaPrev.events.map(e => ({...e, source: 'assistant'}))); }
                       if (Array.isArray(m?.attachments)) {
                         const hitPrev = m.attachments.find(a => typeof a==='string' && String(a).startsWith('events:'));
-                        if (hitPrev) { const objPrev = JSON.parse(String(hitPrev).slice('events:'.length)); if (Array.isArray(objPrev?.events)) prior.push(...objPrev.events); }
+                        if (hitPrev) { const objPrev = JSON.parse(String(hitPrev).slice('events:'.length)); if (Array.isArray(objPrev?.events)) prior.push(...objPrev.events.map(e => ({...e, source: 'assistant'}))); }
                       }
                     } catch {}
                     if (prior.length >= 50) break;
                   }
+                  // Include device calendar events if enabled
+                  if (ASSISTANT_CALENDAR_CONFLICTS_ENABLED && validatedCalendarEvents.length) {
+                    prior.push(...validatedCalendarEvents.map(e => ({ ...e, source: 'device' })));
+                    console.log('[calendar] Added', validatedCalendarEvents.length, 'device events to conflict detection');
+                  }
                   const overlaps = [];
+                  let hasDeviceConflict = false;
                   for (let i = 0; i < events.length; i++) {
                     const e = events[i];
                     const s = new Date(e.startISO).getTime();
@@ -1307,8 +1351,11 @@ exports.handler = async (event) => {
                       const ps = new Date(p.startISO).getTime();
                       const pe = new Date(p.endISO).getTime();
                       if (!Number.isFinite(ps) || !Number.isFinite(pe)) continue;
-                      if (s < pe && ps < en) hits.push({ title: p.title, startISO: p.startISO, endISO: p.endISO, source: 'assistant' });
-                      if (hits.length >= 3) break;
+                      if (s < pe && ps < en) {
+                        hits.push({ startISO: p.startISO, endISO: p.endISO, source: p.source || 'assistant' });
+                        if (p.source === 'device') hasDeviceConflict = true;
+                        if (hits.length >= 3) break;
+                      }
                     }
                     if (hits.length) overlaps.push({ eventIndex: i, conflicts: hits });
                     if (overlaps.length >= 10) break;
@@ -1316,7 +1363,11 @@ exports.handler = async (event) => {
                   if (overlaps.length) {
                     conflictsMeta = { conflicts: overlaps };
                     try { conflictsAttach = 'conflicts:' + JSON.stringify({ conflicts: overlaps }); } catch {}
-                    content = `${content}\n(Heads-up: Some proposed times conflict with earlier plans.)`;
+                    if (hasDeviceConflict) {
+                      content = `${content}\n(Heads-up: Some proposed times conflict with existing events.)`;
+                    } else {
+                      content = `${content}\n(Heads-up: Some proposed times conflict with earlier plans.)`;
+                    }
                   }
                 } catch {}
               }
@@ -1399,23 +1450,29 @@ exports.handler = async (event) => {
       const encEvents = (() => { try { return 'events:' + JSON.stringify({ events }); } catch { return undefined; } })();
       const decisionsMeta = decisionsMetaGlobal;
       const decisionsAttach = decisionsAttachGlobal;
-      // Conflicts detection for fallback events
+      // Conflicts detection for fallback events (includes device calendar)
       let conflictsMeta = undefined; let conflictsAttach = undefined;
       if (ASSISTANT_CONFLICTS_ENABLED && Array.isArray(events) && events.length) {
         try {
           const prior = [];
+          // Include assistant events from recent messages
           for (const m of (recent || [])) {
             try {
               const metaPrev = toObjectJson(m?.metadata);
-              if (Array.isArray(metaPrev?.events)) { prior.push(...metaPrev.events); }
+              if (Array.isArray(metaPrev?.events)) { prior.push(...metaPrev.events.map(e => ({...e, source: 'assistant'}))); }
               if (Array.isArray(m?.attachments)) {
                 const hitPrev = m.attachments.find(a => typeof a==='string' && String(a).startsWith('events:'));
-                if (hitPrev) { const objPrev = JSON.parse(String(hitPrev).slice('events:'.length)); if (Array.isArray(objPrev?.events)) prior.push(...objPrev.events); }
+                if (hitPrev) { const objPrev = JSON.parse(String(hitPrev).slice('events:'.length)); if (Array.isArray(objPrev?.events)) prior.push(...objPrev.events.map(e => ({...e, source: 'assistant'}))); }
               }
             } catch {}
             if (prior.length >= 50) break;
           }
+          // Include device calendar events if enabled
+          if (ASSISTANT_CALENDAR_CONFLICTS_ENABLED && validatedCalendarEvents.length) {
+            prior.push(...validatedCalendarEvents.map(e => ({ ...e, source: 'device' })));
+          }
           const overlaps = [];
+          let hasDeviceConflict = false;
           for (let i = 0; i < events.length; i++) {
             const e = events[i];
             const s = new Date(e.startISO).getTime();
@@ -1426,8 +1483,11 @@ exports.handler = async (event) => {
               const ps = new Date(p.startISO).getTime();
               const pe = new Date(p.endISO).getTime();
               if (!Number.isFinite(ps) || !Number.isFinite(pe)) continue;
-              if (s < pe && ps < en) hits.push({ title: p.title, startISO: p.startISO, endISO: p.endISO, source: 'assistant' });
-              if (hits.length >= 3) break;
+              if (s < pe && ps < en) {
+                hits.push({ startISO: p.startISO, endISO: p.endISO, source: p.source || 'assistant' });
+                if (p.source === 'device') hasDeviceConflict = true;
+                if (hits.length >= 3) break;
+              }
             }
             if (hits.length) overlaps.push({ eventIndex: i, conflicts: hits });
             if (overlaps.length >= 10) break;
@@ -1435,7 +1495,11 @@ exports.handler = async (event) => {
           if (overlaps.length) {
             conflictsMeta = { conflicts: overlaps };
             try { conflictsAttach = 'conflicts:' + JSON.stringify({ conflicts: overlaps }); } catch {}
-            content = `${content}\n(Heads-up: Some proposed times conflict with earlier plans.)`;
+            if (hasDeviceConflict) {
+              content = `${content}\n(Heads-up: Some proposed times conflict with existing events.)`;
+            } else {
+              content = `${content}\n(Heads-up: Some proposed times conflict with earlier plans.)`;
+            }
           }
         } catch {}
       }
