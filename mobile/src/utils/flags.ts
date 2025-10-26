@@ -36,6 +36,7 @@ type Flags = {
   ASSISTANT_DEADLINES_ENABLED: boolean;
   ASSISTANT_CONFLICTS_ENABLED: boolean;
   ASSISTANT_GROUP_ENABLED: boolean;
+  ENABLE_CONVERSATION_LIST_CACHE: boolean;
 };
 
 let _flags: Flags | null = null;
@@ -77,6 +78,7 @@ export function getFlags(): Flags {
     ASSISTANT_DEADLINES_ENABLED: toBool(extra.ASSISTANT_DEADLINES_ENABLED, false),
     ASSISTANT_CONFLICTS_ENABLED: toBool(extra.ASSISTANT_CONFLICTS_ENABLED, false),
     ASSISTANT_GROUP_ENABLED: toBool(extra.ASSISTANT_GROUP_ENABLED, false),
+    ENABLE_CONVERSATION_LIST_CACHE: toBool(extra.ENABLE_CONVERSATION_LIST_CACHE, true),
   };
   return _flags;
 }

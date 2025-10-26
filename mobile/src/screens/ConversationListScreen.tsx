@@ -111,6 +111,26 @@ export default function ConversationListScreen({ route, navigation }: any) {
       const now = Date.now();
       if (!force && now - lastLoadedAtRef.current < 1500) return; // staleness guard
       isLoadingRef.current = true;
+      
+      // Load cached conversations first for instant display (Stale-While-Revalidate)
+      const { ENABLE_CONVERSATION_LIST_CACHE, DEBUG_LOGS } = getFlags();
+      if (ENABLE_CONVERSATION_LIST_CACHE && !force) {
+        try {
+          const cached = await AsyncStorage.getItem('conversationListCache');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setItems(parsed);
+              setAllItems(parsed);
+              setIsInitialLoading(false);
+              if (DEBUG_LOGS) console.log('[cache] Loaded', parsed.length, 'cached conversations');
+            }
+          }
+        } catch (e) {
+          if (DEBUG_LOGS) console.warn('[cache] Load failed:', e);
+        }
+      }
+      
       setError(null);
       // Load nicknames early
       try {
@@ -301,6 +321,18 @@ export default function ConversationListScreen({ route, navigation }: any) {
       });
       setAllItems(convs);
       setItems(convs);
+      
+      // Save conversation list to cache for next launch
+      if (ENABLE_CONVERSATION_LIST_CACHE) {
+        try {
+          await AsyncStorage.setItem('conversationListCache', JSON.stringify(convs));
+          await AsyncStorage.setItem('conversationListCacheTime', new Date().toISOString());
+          if (DEBUG_LOGS) console.log('[cache] Saved', convs.length, 'conversations');
+        } catch (e) {
+          if (DEBUG_LOGS) console.warn('[cache] Save failed:', e);
+        }
+      }
+      
       try { await Notifications.setBadgeCountAsync?.((ENABLE_UNREAD_BADGE ? convs.reduce((acc, c:any)=> acc + (c?._unread ? 1 : 0), 0) : 0) as any); } catch {}
       setNextToken(undefined);
       lastLoadedAtRef.current = Date.now();
