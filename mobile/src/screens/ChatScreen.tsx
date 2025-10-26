@@ -31,10 +31,8 @@ export default function ChatScreen({ route, navigation }: any) {
 	const [messages, setMessages] = useState<any[]>([]);
 	const [input, setInput] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	const [imageUrl, setImageUrl] = useState('');
 	const listRef = useRef<any>(null);
 	const messageInputRef = useRef<any>(null);
-	const imageInputRef = useRef<any>(null);
 	const subRef = useRef<any>(null);
 	const typingSubRef = useRef<any>(null);
 	const receiptsSubRef = useRef<any>(null);
@@ -60,7 +58,6 @@ const [myId, setMyId] = useState<string>('');
 const [otherUserResolved, setOtherUserResolved] = useState<string | undefined>(undefined);
 const [otherLastSeen, setOtherLastSeen] = useState<string | undefined>(undefined);
 const [isSendingMsg, setIsSendingMsg] = useState(false);
-const [isSendingImg, setIsSendingImg] = useState(false);
 const [assistantPending, setAssistantPending] = useState(false);
 const assistantTimerRef = useRef<any>(null);
 // Calendar picker state
@@ -392,7 +389,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                                 const arr = raw ? JSON.parse(raw) : [];
                                 const now = Date.now();
                                 const ready = arr.filter((j: any) => !j.nextTryAt || j.nextTryAt <= now);
-                                if (ready.length) await drainOnce();
+				if (ready.length) await drainOnce();
                             } catch {}
                         };
                         drainIntervalRef.current = setInterval(tick, 4000);
@@ -551,47 +548,6 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 		finally { setIsSendingMsg(false); }
 	};
 
-			const onSendImage = async () => {
-		try {
-			setError(null);
-			const me = await getCurrentUser();
-			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
-			const url = imageUrl.trim();
-			if (!url) { return; }
-			const localId = generateLocalId('img');
-			const optimistic: any = {
-				id: localId,
-				conversationId: cid,
-				createdAt: new Date().toISOString(),
-				senderId: me.userId,
-				content: `[image] ${url}`,
-				attachments: [url],
-				messageType: 'IMAGE',
-				_localStatus: 'PENDING',
-			};
-			setMessages(prev => [optimistic, ...prev]);
-			setImageUrl('');
-			setIsSendingImg(true);
-			try {
-				// For MVP, send the URL as content reference; uploading to S3 can be added later
-				const saved: any = await sendTextMessageCompat(cid, optimistic.content, me.userId);
-				try {} catch {}
-				setMessages(prev => prev.map(m => (m.id === localId ? saved : m)));
-			} catch (sendErr) {
-				try {} catch {}
-				const key = `outbox:${cid}`;
-				const raw = await AsyncStorage.getItem(key);
-				const outbox = raw ? JSON.parse(raw) : [];
-				outbox.push({ type: 'image', imageUrl: url, createdAt: optimistic.createdAt });
-				await AsyncStorage.setItem(key, JSON.stringify(outbox));
-			}
-			const snapshot = (prev => [optimistic, ...prev])(messages);
-			AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
-		} catch (e: any) {
-			setError(e?.message ?? 'Send image failed');
-		}
-		finally { setIsSendingImg(false); }
-	};
 
 	const onChangeInput = async (text: string) => {
 		setInput(text);
@@ -718,23 +674,14 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					finally { setIsLoadingMore(false); }
 				}}
 				renderItem={({ item }: any) => (
-						<View style={{ padding: 8, flexDirection: 'row', alignItems: 'flex-start' }}>
-                            {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() && item.senderId !== myId ? (
-								<View style={{ marginRight: 8 }}>
-                                    <Avatar
-                                        userId={item.senderId}
-                                        firstName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.firstName : undefined}
-                                        lastName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.lastName : undefined}
-                                        email={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.email : undefined}
-                                        color={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.avatarColor : undefined}
-                                        size={24}
-                                    />
-								</View>
-							) : null}
-							{item.messageType === 'IMAGE' && item.attachments?.[0] ? (
-								<Image source={{ uri: item.attachments[0] }} style={{ width: 200, height: 200, borderRadius: 8 }} />
-							) : (
-								<TouchableOpacity onLongPress={async () => {
+					<View style={{ padding: 8, flexDirection: 'row', alignItems: 'flex-start', width: '100%' }}>
+						{item.messageType === 'IMAGE' && item.attachments?.[0] ? (
+							<Image
+								source={{ uri: item.attachments[0] }}
+								style={[{ width: 200, height: 200, borderRadius: 8 }, item.senderId !== myId ? { marginLeft: 'auto' } : null]}
+							/>
+						) : (
+							<TouchableOpacity onLongPress={async () => {
 								try {
 									if (otherUserId && item.senderId) {
 										const me = await getCurrentUser();
@@ -757,7 +704,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 									setInfoVisible(true);
 								}
 								}}>
-									<View style={{ maxWidth: '88%', alignSelf: item.senderId === myId ? 'flex-end' : 'flex-start', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }}>
+								<View style={[{ maxWidth: '88%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }, item.senderId !== myId ? { marginLeft: 'auto' } : null ]}>
 										<Text style={{ color: theme.colors.textPrimary }}>
 											{(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? '' : `${item.senderId === myId ? 'Me' : item.senderId}: `}
 											{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
@@ -772,6 +719,18 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 									</View>
 								</TouchableOpacity>
 							)}
+						{(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() && item.senderId !== myId ? (
+							<View style={{ marginLeft: 8 }}>
+								<Avatar
+									userId={item.senderId}
+									firstName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.firstName : undefined}
+									lastName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.lastName : undefined}
+									email={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.email : undefined}
+									color={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.avatarColor : undefined}
+									size={24}
+								/>
+							</View>
+						) : null}
 						</View>
 				)}
 			/>
@@ -880,22 +839,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					<Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send</Text>
 				</TouchableOpacity>
 			</View>
-			<View style={{ flexDirection: 'row', padding: 8, gap: 8, backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 1 }}>
-				<TextInput
-					ref={imageInputRef}
-					style={{ flex: 1, borderWidth: 1, padding: 10, borderColor: theme.colors.border, backgroundColor: 'white', borderRadius: 8 }}
-					value={imageUrl}
-					onChangeText={setImageUrl}
-					placeholder="Image URL"
-					autoCapitalize="none"
-					returnKeyType="send"
-					blurOnSubmit={false}
-					onSubmitEditing={() => { onSendImage(); imageInputRef.current?.focus?.(); }}
-				/>
-				<TouchableOpacity onPress={onSendImage} accessibilityLabel="Send image" style={{ backgroundColor: '#F2EFEA', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
-					<Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send Image</Text>
-				</TouchableOpacity>
-			</View>
+
 		</View>
 	);
 }

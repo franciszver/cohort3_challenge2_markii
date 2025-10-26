@@ -86,6 +86,7 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
             value={code}
             onChangeText={setCode}
             returnKeyType="go"
+            autoFocus
             onFocus={() => setCodeFocused(true)}
             onBlur={() => setCodeFocused(false)}
             onSubmitEditing={() => { if (email && code && !confirming) onConfirm(); }}
@@ -95,7 +96,8 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
           <TouchableOpacity
             onPress={onConfirm}
             disabled={!email || !code || confirming}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || !code || confirming) ? 0.6 : 1 }}
+            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || !code || confirming) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Confirm verification"
           >
             {confirming ? (
@@ -113,7 +115,8 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
           <TouchableOpacity
             onPress={onResend}
             disabled={!email || isResending}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || isResending) ? 0.6 : 1 }}
+            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || isResending) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Resend verification code"
           >
             {isResending ? (

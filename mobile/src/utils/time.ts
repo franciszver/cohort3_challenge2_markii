@@ -6,10 +6,10 @@ export function formatTimestamp(iso: string): string {
     const oneMinute = 60 * 1000;
     const oneHour = 60 * oneMinute;
     const oneDay = 24 * oneHour;
-    if (diffMs < oneMinute) return 'just now';
+    if (diffMs < oneMinute) return `${Math.floor(Math.max(0, diffMs) / 1000)}s ago`;
     if (diffMs < oneHour) return `${Math.floor(diffMs / oneMinute)}m ago`;
     if (diffMs < oneDay) return `${Math.floor(diffMs / oneHour)}h ago`;
-    return d.toLocaleString();
+    return d.toLocaleString(undefined, { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' } as any);
   } catch {
     return iso;
   }

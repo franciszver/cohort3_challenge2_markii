@@ -69,7 +69,8 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
               <TouchableOpacity
                 onPress={onRequest}
                 disabled={!email || busy || !isOnline}
-                style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || busy || !isOnline) ? 0.6 : 1 }}
+                style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || busy || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel="Send password reset code"
               >
                 {busy ? (
@@ -116,7 +117,8 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
               <TouchableOpacity
                 onPress={onConfirm}
                 disabled={!code || !password || busy || !isOnline}
-                style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!code || !password || busy || !isOnline) ? 0.6 : 1 }}
+                style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!code || !password || busy || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel="Submit new password"
               >
                 {busy ? (

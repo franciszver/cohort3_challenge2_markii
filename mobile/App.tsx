@@ -1,6 +1,7 @@
 ﻿import 'react-native-gesture-handler';
 import React, { useEffect } from 'react';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import { Text, TextInput } from 'react-native';
 import { ThemeProvider } from './src/utils/theme';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -79,6 +80,9 @@ export default function App() {
     })();
   }, []);
 
+  try { (Text as any).defaultProps = { ...(Text as any).defaultProps, maxFontSizeMultiplier: 1.2 }; } catch {}
+  try { (TextInput as any).defaultProps = { ...(TextInput as any).defaultProps, maxFontSizeMultiplier: 1.2 }; } catch {}
+
   return (
     <ThemeProvider>
       <NavigationContainer ref={navRef}>
@@ -93,7 +97,7 @@ export default function App() {
             <Stack.Screen name="Home" component={HomeScreen} />
             <Stack.Screen name="Conversations" component={ConversationListScreen} options={{ title: 'Conversations', headerTitleAlign: 'center' }} />
             <Stack.Screen name="GroupCreate" component={GroupCreateScreen} options={{ title: 'Start a chat' }} />
-            <Stack.Screen name="Chat" component={ChatScreen} />
+            <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
           </Stack.Navigator>
         </ErrorBoundary>
       </NavigationContainer>

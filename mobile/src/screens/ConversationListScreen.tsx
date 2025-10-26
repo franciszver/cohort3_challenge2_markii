@@ -117,7 +117,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
         headerStyle: { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border, borderBottomWidth: 1 },
         headerTitleAlign: 'center',
         headerRight: () => (
-          <TouchableOpacity accessibilityLabel="Menu" onPress={() => setShowMenu(true)} style={{ paddingHorizontal: 12, paddingVertical: 4 }}>
+          <TouchableOpacity accessibilityLabel="Menu" onPress={() => setShowMenu(true)} style={{ paddingHorizontal: 12, paddingVertical: 8, minHeight: 44, justifyContent: 'center' }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={{ fontSize: 22, color: theme.colors.textPrimary }}>☰</Text>
           </TouchableOpacity>
         ),
@@ -400,7 +400,8 @@ export default function ConversationListScreen({ route, navigation }: any) {
         <TouchableOpacity
           onPress={() => navigation.navigate('GroupCreate')}
           accessibilityLabel="New conversation"
-          style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}
+          style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3, minHeight: 44, justifyContent: 'center' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>+ New Convo</Text>
         </TouchableOpacity>
@@ -424,7 +425,8 @@ export default function ConversationListScreen({ route, navigation }: any) {
               } catch {}
             }}
             accessibilityLabel="Open Assistant"
-            style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}
+            style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3, minHeight: 44, justifyContent: 'center' }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>Ai</Text>
           </TouchableOpacity>

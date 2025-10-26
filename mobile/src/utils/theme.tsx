@@ -24,7 +24,7 @@ const Light: Theme = {
     // Pencil lead dark gray for main text
     textPrimary: '#2F2F2F',
     // Softer graphite for secondary text
-    textSecondary: '#6B6B6B',
+    textSecondary: '#4A4A4A',
     // Accent resembling pencil graphite highlight
     primary: '#4B5563',
     // Message bubbles akin to light graphite on paper

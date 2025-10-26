@@ -199,6 +199,7 @@ export default function AuthScreen({ navigation }: any) {
             autoCorrect={false}
             keyboardType="email-address"
             returnKeyType={mode === 'signin' ? 'next' : 'done'}
+            autoFocus
             value={email}
             onFocus={() => setEmailFocused(true)}
             onBlur={() => setEmailFocused(false)}
@@ -270,7 +271,8 @@ export default function AuthScreen({ navigation }: any) {
           <TouchableOpacity
             onPress={onSignIn}
             disabled={isSignedIn || signingIn || !isOnline}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (isSignedIn || signingIn || !isOnline) ? 0.6 : 1 }}
+            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (isSignedIn || signingIn || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Enter"
           >
             {signingIn ? (
@@ -290,7 +292,8 @@ export default function AuthScreen({ navigation }: any) {
           <TouchableOpacity
             onPress={onSignUp}
             disabled={signingUp || !isOnline}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (signingUp || !isOnline) ? 0.6 : 1 }}
+            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (signingUp || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Submit sign up"
           >
             {signingUp ? (

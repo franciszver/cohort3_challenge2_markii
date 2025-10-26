@@ -87,7 +87,8 @@ export default function GroupCreateScreen({ navigation }: any) {
         <TouchableOpacity
           onPress={onCreate}
           disabled={!hasParticipants}
-          style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !hasParticipants ? 0.6 : 1 }}
+          style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !hasParticipants ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel="Create conversation"
         >
           <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Create</Text>
