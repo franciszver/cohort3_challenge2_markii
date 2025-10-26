@@ -40,7 +40,9 @@
 - Recipe suggestions (flag `ASSISTANT_RECIPE_ENABLED`): detects dinner intent; Themealdb retriever (~3.5s); emits `metadata.recipes` and `recipes:{...}`; mobile shows “View recipes” modal (title, ingredients, steps).
 - Preferences memory: “Set/Show preferences” via SYSTEM messages + attachment sentinels; preferences included in OpenAI prompting.
 - Saved lists: “Save/Add/Show/List lists” via SYSTEM metadata + sentinels; assistant acks with readable summaries.
-- Deploy & env: `scripts/agent/deploy.ps1` configures Lambda with `ASSISTANT_OPENAI_ENABLED`, `ASSISTANT_RECIPE_ENABLED`, `OPENAI_MODEL`, optional `OPENAI_SECRET_ARN`; example envs updated (`env.example.json`, `mobile/.env.example`).
+- Decisions (flag `ASSISTANT_DECISIONS_ENABLED`): backend extracts decisions from recent messages; attaches `metadata.decisions` and `decisions:{...}` sentinel; mobile renders “View decisions” CTA and modal. UI also infers decisions when backend metadata is delayed to preserve UX.
+- Event parsing fallback: when OpenAI returns no `events[]`, the Lambda deterministically derives events from user text (e.g., “Plan Friday: 6am–7am meeting”) and posts them so the calendar CTA still appears.
+- Deploy & env: `scripts/agent/deploy.ps1` configures Lambda with `ASSISTANT_OPENAI_ENABLED`, `ASSISTANT_RECIPE_ENABLED`, `ASSISTANT_DECISIONS_ENABLED`, `OPENAI_MODEL`, and either `OPENAI_SECRET_ARN` or `OPENAI_API_KEY`; example envs updated (`env.example.json`, `mobile/.env.example`). New: `-DebugLogs` switch to enable verbose diagnostics and an upsert that rebinds the HTTP API route to the latest Lambda integration.
 - Performance/timeouts: AppSync ~4s; OpenAI ~6s; recipes ~3.5s.
   - New: mobile flags scaffolded for decisions/priorities/RSVPs/deadlines/conflicts/group; env placeholders added in `env.example.json` and `mobile/.env.example`. (completed)
 
@@ -107,13 +109,10 @@ All new features must be fully reversible via flags, validate strict JSON, and d
 - Acceptance: assistant warns about conflicts with prior chat events; adding to calendar is still allowed.
 
 2) Decision Summarization (`ASSISTANT_DECISIONS_ENABLED`)
-- Backend (OpenAI): extract `decisions[]` from recent messages: `{ title, summary, participants[], decidedAtISO }`.
-- Metadata/sentinel: `metadata.decisions`, `decisions:{...}`.
-- Mobile UI: “View decisions” CTA under assistant messages; modal lists decisions and participants.
-- Trigger: when enabled, attempt extraction on assistant replies; use lightweight keyword heuristics (e.g., “we decided”, “let’s go with”) to suppress empty/noisy outputs.
-- Participants: derive from message authors’ `userId`; client maps to display names for rendering.
-- Flag: default off.
-- Acceptance: group consensus captured with time and participants; appears within ≤8s end‑to‑end.
+- Status: Implemented (backend + mobile). Backend extracts and posts decisions; mobile renders CTA + modal. UI includes a best‑effort local inference when backend metadata is delayed.
+- Shape: `metadata.decisions = [{ title, summary, participants[], decidedAtISO }]` with sentinel `decisions:{...}`.
+- Trigger: extraction on assistant replies using lightweight keyword heuristics.
+- Acceptance: decisions visible under assistant messages within ≤8s end‑to‑end.
 
 3) Priority Highlighting (`ASSISTANT_PRIORITY_ENABLED`)
 - Backend (OpenAI): extract `priorities[]` with `{ item, level:'low'|'medium'|'high', reason, dueISO? }`.
@@ -220,15 +219,23 @@ All new features must be fully reversible via flags, validate strict JSON, and d
 - OpenAI fallback: simulate timeouts; weekend template + events still posted.
 - Group chat: add a participant; assistant continues to function, decisions/RSVPs attribute to correct users.
 
+### 2025-10-26 — Completed Work (Stability and DX)
+- Decisions listing reliability: broadened extraction to parse decisions from metadata, attachments (string/object AWSJSON), inline `decisions:{...}` content tokens, explicit “Recorded decision \"…\"” acks, and the command “Add decision: …”.
+- Bounded retries: replaced unbounded polling with a strict time‑budgeted retry loop to avoid Lambda timeouts when listing decisions.
+- Handler hardening: AppSync HTTP end‑handler wrapped; non‑JSON and callback errors no longer crash the Lambda.
+- Debug instrumentation: gated `[assistant][debug]` logs for decisions listing, including compact message shape sampling; code‑version banner for deployment verification.
+- Deploy script upgrades: `-DebugLogs` flag; route integration rebinding (upsert) to ensure API Gateway targets the latest function code.
+
 ### Completed vs Remaining
 - Completed:
   - OpenAI JSON replies with events (flag‑gated), calendar CTA/write flow.
   - Dinner intent + recipes retriever + UI (flag‑gated).
   - Preferences and saved lists via SYSTEM metadata + sentinels.
-  - Deploy script and example envs with new flags.
+  - Decision summarization (backend + mobile CTA/modal) with local UI fallback.
+  - Event parsing fallback when OpenAI returns no events.
+- Deploy script and example envs with new flags. New: `-DebugLogs`, integration rebinding, handler hardening, decisions debug.
 - Remaining (flag‑gated):
   - Event conflict warnings (`ASSISTANT_CONFLICTS_ENABLED`).
-  - Decision summarization (`ASSISTANT_DECISIONS_ENABLED`).
   - Priority highlighting (`ASSISTANT_PRIORITY_ENABLED`).
   - RSVP tracking (`ASSISTANT_RSVP_ENABLED`).
   - Deadline extraction (`ASSISTANT_DEADLINES_ENABLED`).
