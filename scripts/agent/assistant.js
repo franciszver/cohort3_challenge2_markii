@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const https = require('https');
 
 const { APPSYNC_ENDPOINT, AWS_REGION = 'us-east-1', ASSISTANT_BOT_USER_ID = 'assistant-bot', ASSISTANT_REPLY_PREFIX = 'Assistant Echo:' } = process.env;
+const CODE_VERSION = 'decisions-debug-v3';
 
 if (!APPSYNC_ENDPOINT) {
   console.warn('[assistant] Missing APPSYNC_ENDPOINT');
@@ -63,14 +64,19 @@ function signAndRequest({ query, variables, opName, jwt }) {
       console.log(`[assistant] AppSync request ${opName || '(unknown)'} → ${host}${path}`);
       const req = https.request(options, (res) => {
         let data = '';
-        res.on('data', (d) => { data += d; });
+        res.on('data', (d) => { try { data += d; } catch {} });
         res.on('end', () => {
-          console.log(`[assistant] AppSync response ${opName || '(unknown)'} ${res.statusCode} in ${Date.now()-startedAt}ms`);
           try {
-            const json = JSON.parse(data || '{}');
-            resolve(json);
-          } catch (e) {
-            resolve({ errors: [{ message: 'Non-JSON response from AppSync' }], raw: data });
+            console.log(`[assistant] AppSync response ${opName || '(unknown)'} ${res.statusCode} in ${Date.now()-startedAt}ms`);
+            try {
+              const json = JSON.parse(data || '{}');
+              resolve(json);
+            } catch (e) {
+              resolve({ errors: [{ message: 'Non-JSON response from AppSync' }], raw: data });
+            }
+          } catch (e2) {
+            try { console.warn('[assistant] AppSync end handler error:', e2?.message || e2); } catch {}
+            resolve({ errors: [{ message: 'End handler error' }], raw: data });
           }
         });
       });
@@ -294,16 +300,25 @@ function parseEventsFromText(text, now = new Date()) {
   try {
     const t = String(text || '').trim();
     if (!t) return [];
-    let dayOffset = 0;
-    const dm = /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|today|tomorrow)/i.exec(t);
-    if (dm) {
-      const off = parseDayOffsetFromWord(dm[1], now);
-      if (off != null) dayOffset = off;
-    }
-    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, 0, 0, 0, 0);
-    const parts = t.split(/;+/).map(s => s.trim()).filter(Boolean);
-    const out = [];
-    for (const partRaw of (parts.length ? parts : [t])) {
+    // Build text variants to be robust to punctuation and prefixes
+    const dayRe = /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|today|tomorrow)/i;
+    const v1 = t;
+    const v2 = t.replace(/\bplan\s+([a-z]+)\s*:\s*/i, (_m, d) => `plan ${d} `);
+    const v3 = t.replace(dayRe, (d) => d).replace(/:\s*(?=\d)/g, ' ');
+    const v4 = t.replace(/^\s*plan\s+/i, '');
+    const variants = Array.from(new Set([v1, v2, v3, v4].map(s => (s || '').trim()).filter(Boolean)));
+
+    for (const scan of variants) {
+      let dayOffset = 0;
+      const dm = dayRe.exec(scan);
+      if (dm) {
+        const off = parseDayOffsetFromWord(dm[1], now);
+        if (off != null) dayOffset = off;
+      }
+      const base = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, 0, 0, 0, 0);
+      const parts = scan.split(/;+/).map(s => s.trim()).filter(Boolean);
+      const out = [];
+      for (const partRaw of (parts.length ? parts : [scan])) {
       const part = partRaw.trim();
       const lower = part.toLowerCase();
       let start = null; let end = null; let title = null;
@@ -332,12 +347,64 @@ function parseEventsFromText(text, now = new Date()) {
           }
         }
       }
+      if (!start) {
+        // Handle explicit am/pm on both sides: e.g., 7:00am-8:00am title
+        const mBoth = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(part);
+        if (mBoth) {
+          const h1 = parseInt(mBoth[1], 10);
+          const mi1 = mBoth[2] ? parseInt(mBoth[2], 10) : 0;
+          const ap1 = mBoth[3].toLowerCase();
+          const h2 = parseInt(mBoth[4], 10);
+          const mi2 = mBoth[5] ? parseInt(mBoth[5], 10) : 0;
+          const ap2 = mBoth[6].toLowerCase();
+          const t1 = parseTimeToken(`${h1}:${String(mi1).padStart(2,'0')}${ap1}`) || parseTimeToken(`${h1}${ap1}`);
+          const t2 = parseTimeToken(`${h2}:${String(mi2).padStart(2,'0')}${ap2}`) || parseTimeToken(`${h2}${ap2}`);
+          if (t1 && t2) {
+            start = buildDateOn(base, t1.hour, t1.minute);
+            end = buildDateOn(base, t2.hour, t2.minute);
+            const idx = mBoth.index + mBoth[0].length;
+            const after = part.slice(idx).trim().replace(/^[:\-–]\s*/, '');
+            title = after || 'Planned item';
+          }
+        }
+      }
       if (start && end) {
         out.push({ title: String(title || 'Planned item').slice(0,80), startISO: start.toISOString(), endISO: end.toISOString() });
       }
       if (out.length >= 10) break;
     }
-    return out;
+      if (out.length) return out;
+    }
+    // Final fallback: slice from first time token and parse a simple range
+    try {
+      const mFirst = /(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i.exec(t);
+      if (mFirst) {
+        const tail = t.slice(mFirst.index);
+        const mPair = /(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:-|–|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i.exec(tail);
+        let sDate = null; let eDate = null;
+        if (mPair) {
+          const aTok = parseTimeToken(mPair[1]);
+          const bTok = parseTimeToken(mPair[2]);
+          if (aTok && bTok) {
+            const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            sDate = buildDateOn(base, aTok.hour, aTok.minute);
+            eDate = buildDateOn(base, bTok.hour, bTok.minute);
+          }
+        } else {
+          const aTok = parseTimeToken(mFirst[0]);
+          if (aTok) {
+            const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            sDate = buildDateOn(base, aTok.hour, aTok.minute);
+            eDate = new Date(sDate.getTime() + 60*60*1000);
+          }
+        }
+        if (sDate && eDate) {
+          const title = t.slice(mFirst.index + (mPair ? mPair[0].length : mFirst[0].length)).trim() || 'Planned item';
+          return [{ title: String(title).slice(0,80), startISO: sDate.toISOString(), endISO: eDate.toISOString() }];
+        }
+      }
+    } catch {}
+    return [];
   } catch { return []; }
 }
 
@@ -588,7 +655,8 @@ async function getRecentSystemMessages(conversationId, jwt, limit = 200) {
 exports.handler = async (event) => {
   try {
     console.log('[assistant] handler invoked');
-    console.log('[assistant] env region:', AWS_REGION, 'endpoint set:', !!APPSYNC_ENDPOINT);
+    console.log('[assistant] code version:', CODE_VERSION);
+    console.log('[assistant] env region:', AWS_REGION, 'endpoint set:', !!APPSYNC_ENDPOINT, 'debug:', String(process.env.DEBUG_LOGS||'').toLowerCase());
     // Detect API Gateway shapes: REST (v1) has httpMethod; HTTP API (v2) has requestContext.http.method
     const isHttpV1 = !!event?.httpMethod;
     const isHttpV2 = !!event?.requestContext?.http?.method;
@@ -632,12 +700,14 @@ exports.handler = async (event) => {
     const ASSISTANT_OPENAI_ENABLED = getEnvBool('ASSISTANT_OPENAI_ENABLED', false);
     const ASSISTANT_RECIPE_ENABLED = getEnvBool('ASSISTANT_RECIPE_ENABLED', false);
     const ASSISTANT_DECISIONS_ENABLED = getEnvBool('ASSISTANT_DECISIONS_ENABLED', false);
+    const ASSISTANT_CONFLICTS_ENABLED = getEnvBool('ASSISTANT_CONFLICTS_ENABLED', false);
     const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini');
 
     // Single tool: get recent messages
     let recent = [];
     try { recent = await getRecentMessages(conversationId, 10, jwt); } catch (e) { console.warn('[assistant] getRecentMessages failed:', e?.message || e); }
-    const lastUserMessage = (recent || []).find((m) => m?.senderId === userId)?.content || text || '';
+    // Prefer the current request text to avoid eventual consistency gaps
+    const lastUserMessage = (text && String(text).trim()) ? String(text) : ((recent || []).find((m) => m?.senderId === userId)?.content || '');
 
     // Precompute decisions once (flag-gated). Include current text to avoid eventual consistency gaps.
     let decisionsMetaGlobal = undefined; let decisionsAttachGlobal = undefined;
@@ -891,6 +961,229 @@ exports.handler = async (event) => {
       await createAssistantMessage(conversationId, ack, jwt);
       return respond(isHttp, 200, { ok: true });
     }
+
+    // Explicit decision add: "Add decision: <title>"
+    if (lower.startsWith('add decision:')) {
+      const titleRaw = String(text || '').slice('add decision:'.length).trim();
+      const title = titleRaw || 'Decision';
+      const decision = {
+        title: title.slice(0, 80),
+        summary: title.slice(0, 200),
+        participants: [userId],
+        decidedAtISO: new Date().toISOString(),
+      };
+      const payloadStr = (() => { try { return JSON.stringify({ decisions: [decision] }); } catch { return '{}'; } })();
+      // Persist as SYSTEM metadata and attachment; also attach to ack for immediate visibility
+      await createSystemMetadataMessage(
+        conversationId,
+        jwt,
+        { decisions: [decision] },
+        '[assistant:decisions] decisions:' + payloadStr,
+        ['decisions:' + payloadStr]
+      );
+      const ack = `${ASSISTANT_REPLY_PREFIX} Recorded decision "${title}".`;
+      await createAssistantMessage(conversationId, ack, jwt, { decisions: [decision] }, ['decisions:' + payloadStr], 'TEXT');
+      try { logMetric('decisions_recorded', 1); } catch {}
+      return respond(isHttp, 200, { ok: true });
+    }
+
+    // Deterministic decisions listing (no OpenAI)
+    try { dbg('incoming lower =', lower); } catch {}
+    const isDecisionsCmd = /\b(?:show|list|view|see)\s+(?:recent\s+)?decisions?\b|\bshow\s+updates?\b|\bdecisions\s+please\b/i.test(lower);
+    if (isDecisionsCmd) {
+      console.log('[assistant] decisions command matched');
+      try {
+        let decisions = [];
+        let recentMsgs = [];
+        // Retry recent fetch + extraction within a strict time budget (to avoid Lambda timeouts)
+        const budgetMs = (() => { try { const n = parseInt(process.env.DECISIONS_LIST_BUDGET_MS || '', 10); return Number.isFinite(n) && n > 0 ? Math.min(n, 7000) : 3000; } catch { return 3000; } })();
+        const deadline = Date.now() + budgetMs;
+        let attempt = 0;
+        while (Date.now() < deadline && attempt < 6) {
+          try { recentMsgs = await getRecentMessages(conversationId, 200, jwt); } catch { recentMsgs = []; }
+          // Debug sample of fetched message shapes (gated by DEBUG_LOGS)
+          try {
+            dbg('decisions:list recent length =', (recentMsgs||[]).length);
+            const sample = (recentMsgs||[]).slice(0, 8).map((m)=>{
+              let attType = typeof m?.attachments;
+              let attPreview = undefined;
+              try {
+                if (Array.isArray(m?.attachments)) {
+                  attType = 'array';
+                  attPreview = m.attachments.slice(0,2).map((a)=> typeof a === 'string' ? a.slice(0,40) : '[obj]');
+                } else if (typeof m?.attachments === 'string') {
+                  attType = 'string';
+                  attPreview = String(m.attachments).slice(0, 60);
+                }
+              } catch {}
+              const metaObj = (()=>{ try { return toObjectJson(m?.metadata); } catch { return {}; } })();
+              return {
+                id: m?.id,
+                senderId: m?.senderId,
+                type: m?.messageType,
+                content: String(m?.content||'').slice(0, 60),
+                metaKeys: Object.keys(metaObj||{}),
+                metaHasDecisions: !!(Array.isArray(metaObj?.decisions) && metaObj.decisions.length),
+                attType,
+                attPreview,
+              };
+            });
+            dbg('decisions:list sample =', JSON.stringify(sample));
+          } catch {}
+          // 1) Prefer explicit decisions stored in metadata or attachment
+          try {
+            const collected = [];
+            for (const m of (recentMsgs || [])) {
+              try {
+                const meta = toObjectJson(m?.metadata);
+                if (Array.isArray(meta?.decisions) && meta.decisions.length) {
+                  collected.push(...meta.decisions);
+                }
+                // Normalize attachments from AWSJSON (string or array)
+                let atts = [];
+                try {
+                  if (Array.isArray(m?.attachments)) atts = m.attachments;
+                  else if (typeof m?.attachments === 'string') {
+                    const parsed = JSON.parse(m.attachments);
+                    if (Array.isArray(parsed)) atts = parsed;
+                  }
+                } catch {}
+                if (Array.isArray(atts) && atts.length) {
+                  const hit = atts.find((a) => {
+                    try {
+                      if (typeof a === 'string') return String(a).startsWith('decisions:');
+                      if (a && typeof a === 'object') {
+                        const s = JSON.stringify(a);
+                        return s.startsWith('{"decisions":') || s.includes('"decisions":');
+                      }
+                      return false;
+                    } catch { return false; }
+                  });
+                  if (hit) {
+                    try {
+                      const raw = typeof hit === 'string' ? String(hit).slice('decisions:'.length) : JSON.stringify(hit);
+                      const obj = JSON.parse(raw);
+                      if (Array.isArray(obj?.decisions) && obj.decisions.length) collected.push(...obj.decisions);
+                    } catch {}
+                  }
+                }
+                // Content token fallback: decisions:<json> embedded in message content
+                if (typeof m?.content === 'string' && m.content.includes('decisions:')) {
+                  try {
+                    const idx = m.content.indexOf('decisions:');
+                    const jsonPart = m.content.slice(idx + 'decisions:'.length).trim();
+                    const obj = JSON.parse(jsonPart);
+                    if (Array.isArray(obj?.decisions) && obj.decisions.length) collected.push(...obj.decisions);
+                  } catch {}
+                }
+              } catch {}
+              if (collected.length >= 20) break;
+            }
+            if (collected.length) { decisions = collected; }
+          } catch {}
+          // 2) Fallback: extract from message content
+          if (!(Array.isArray(decisions) && decisions.length)) {
+            try { decisions = extractDecisionsFromRecent(recentMsgs || [], userId) || []; } catch { decisions = []; }
+          }
+          // 3) Ultra-permissive content scan
+          if (!Array.isArray(decisions) || !decisions.length) {
+            try {
+              const patt = /(decid|decision|recorded\s+decision|agreed|go\s+with|chose|choose|assistant:decisions)/i;
+              const hits = [];
+              for (const m of (recentMsgs || [])) {
+                const txt = String(m?.content || '');
+                if (patt.test(txt)) {
+                  hits.push({
+                    title: txt.slice(0, 80),
+                    summary: txt.slice(0, 200),
+                    participants: m?.senderId ? [m.senderId] : [],
+                    decidedAtISO: (()=>{ try { return new Date(m.createdAt).toISOString(); } catch { return new Date().toISOString(); } })(),
+                  });
+                  if (hits.length >= 10) break;
+                }
+              }
+              if (hits.length) decisions = hits;
+            } catch {}
+          }
+          // 4) Targeted parse of 'Recorded decision "X"' in assistant messages
+          if (!Array.isArray(decisions) || !decisions.length) {
+            try {
+              const rx = /recorded\s+decision\s+\"([^\"]+)\"/i;
+              const hits = [];
+              for (const m of (recentMsgs || [])) {
+                try {
+                  if (m?.senderId !== ASSISTANT_BOT_USER_ID) continue;
+                  const txt = String(m?.content || '');
+                  const mm = rx.exec(txt);
+                  if (mm && mm[1]) {
+                    hits.push({
+                      title: String(mm[1]).slice(0, 80),
+                      summary: txt.slice(0, 200),
+                      participants: [],
+                      decidedAtISO: (()=>{ try { return new Date(m.createdAt).toISOString(); } catch { return new Date().toISOString(); } })(),
+                    });
+                    if (hits.length >= 10) break;
+                  }
+                } catch {}
+              }
+              if (hits.length) decisions = hits;
+            } catch {}
+          }
+          if (Array.isArray(decisions) && decisions.length) break;
+          // short backoff within remaining budget
+          const now = Date.now();
+          const remaining = Math.max(0, deadline - now);
+          if (remaining <= 0) break;
+          const delay = Math.min(400, remaining);
+          await new Promise(r => setTimeout(r, delay));
+          attempt++;
+        }
+        const top = (decisions || []).slice(0, 10);
+        if (!top.length) {
+          // Final fallback: list last assistant messages that look like decisions
+          try {
+            const patt2 = /(decid|agreed|go\s+with|chose|choose)/i;
+            const fallbacks = (recentMsgs || [])
+              .filter(m => m?.senderId === ASSISTANT_BOT_USER_ID && patt2.test(String(m?.content || '')))
+              .slice(0, 5)
+              .map(m => ({
+                title: String(m.content || '').slice(0, 80),
+                summary: String(m.content || '').slice(0, 200),
+                participants: [],
+                decidedAtISO: (()=>{ try { return new Date(m.createdAt).toISOString(); } catch { return new Date().toISOString(); } })(),
+              }));
+            if (fallbacks.length) {
+              const lines = fallbacks.map(d => `• ${d.title}`);
+              const ack = `${ASSISTANT_REPLY_PREFIX} Recent decisions:\n${lines.join('\\n')}`;
+              const attach = (() => { try { return 'decisions:' + JSON.stringify({ decisions: fallbacks }); } catch { return undefined; } })();
+              await createAssistantMessage(conversationId, ack, jwt, { decisions: fallbacks }, attach ? [attach] : undefined, 'TEXT');
+              try { logMetric('decisions_fallback_listed', fallbacks.length); } catch {}
+              return respond(isHttp, 200, { ok: true });
+            }
+          } catch {}
+          const ack = `${ASSISTANT_REPLY_PREFIX} No recent decisions.`;
+          await createAssistantMessage(conversationId, ack, jwt);
+          return respond(isHttp, 200, { ok: true });
+        }
+        const lines = top.map((d) => `• ${String(d.title || d.summary || '').slice(0, 80)}`);
+        const ack = `${ASSISTANT_REPLY_PREFIX} Recent decisions:\n${lines.join('\\n')}`;
+        const attach = (() => { try { return 'decisions:' + JSON.stringify({ decisions: top }); } catch { return undefined; } })();
+        await createAssistantMessage(
+          conversationId,
+          ack,
+          jwt,
+          { decisions: top },
+          attach ? [attach] : undefined,
+          'TEXT'
+        );
+        try { logMetric('decisions_listed', (top || []).length); } catch {}
+        return respond(isHttp, 200, { ok: true });
+      } catch (e) {
+        const ack = `${ASSISTANT_REPLY_PREFIX} No recent decisions.`;
+        await createAssistantMessage(conversationId, ack, jwt);
+        return respond(isHttp, 200, { ok: true });
+      }
+    }
     // Phase 2: Dinner intent retrieval (prioritize over Phase 1). Fallback to Phase 1 on failure.
     const dinnerIntent = ASSISTANT_RECIPE_ENABLED && detectDinnerIntent(lastUserMessage || text || '');
     if (dinnerIntent) {
@@ -913,6 +1206,30 @@ exports.handler = async (event) => {
       } catch {}
       // If we reach here, proceed to Phase 1 (OpenAI) or fallback
     }
+
+    // Auto-save decisions on explicit phrases before calling OpenAI
+    try {
+      if (ASSISTANT_DECISIONS_ENABLED) {
+        const t = String(text || '').toLowerCase();
+        if (/\bwe\s+decided\b|\bdecided\s+to\b|\bwe\s+agreed\b|\bagreed\s+to\b|\bwe\s+(?:will|\'ll)\s+go\s+with\b|\bwe\s+chose\b|\bwe\s+choose\b/.test(t)) {
+          const decision = {
+            title: String(text || '').slice(0, 80),
+            summary: String(text || '').slice(0, 200),
+            participants: [userId],
+            decidedAtISO: new Date().toISOString(),
+          };
+          const payloadStr = (() => { try { return JSON.stringify({ decisions: [decision] }); } catch { return '{}'; } })();
+          await createSystemMetadataMessage(
+            conversationId,
+            jwt,
+            { decisions: [decision] },
+            '[assistant:decisions] decisions:' + payloadStr,
+            ['decisions:' + payloadStr]
+          );
+          try { logMetric('decisions_autosaved', 1); } catch {}
+        }
+      }
+    } catch {}
 
     // Attempt Phase 1 (OpenAI) if enabled and key available
     let openaiAttempted = false;
@@ -949,7 +1266,7 @@ exports.handler = async (event) => {
                   }
                 } catch {}
               }
-              const content = `${ASSISTANT_REPLY_PREFIX} ${modelText}`.trim();
+              let content = `${ASSISTANT_REPLY_PREFIX} ${modelText}`.trim();
               // Optional: decision extraction on assistant replies
               let decisionsMeta = decisionsMetaGlobal;
               let decisionsAttach = decisionsAttachGlobal;
@@ -963,20 +1280,87 @@ exports.handler = async (event) => {
                   }
                 } catch {}
               }
+              // Optional conflicts detection against prior assistant events
+              let conflictsMeta = undefined; let conflictsAttach = undefined;
+              if (ASSISTANT_CONFLICTS_ENABLED && Array.isArray(events) && events.length) {
+                try {
+                  const prior = [];
+                  for (const m of (recent || [])) {
+                    try {
+                      const metaPrev = toObjectJson(m?.metadata);
+                      if (Array.isArray(metaPrev?.events)) { prior.push(...metaPrev.events); }
+                      if (Array.isArray(m?.attachments)) {
+                        const hitPrev = m.attachments.find(a => typeof a==='string' && String(a).startsWith('events:'));
+                        if (hitPrev) { const objPrev = JSON.parse(String(hitPrev).slice('events:'.length)); if (Array.isArray(objPrev?.events)) prior.push(...objPrev.events); }
+                      }
+                    } catch {}
+                    if (prior.length >= 50) break;
+                  }
+                  const overlaps = [];
+                  for (let i = 0; i < events.length; i++) {
+                    const e = events[i];
+                    const s = new Date(e.startISO).getTime();
+                    const en = new Date(e.endISO).getTime();
+                    if (!Number.isFinite(s) || !Number.isFinite(en)) continue;
+                    const hits = [];
+                    for (const p of prior) {
+                      const ps = new Date(p.startISO).getTime();
+                      const pe = new Date(p.endISO).getTime();
+                      if (!Number.isFinite(ps) || !Number.isFinite(pe)) continue;
+                      if (s < pe && ps < en) hits.push({ title: p.title, startISO: p.startISO, endISO: p.endISO, source: 'assistant' });
+                      if (hits.length >= 3) break;
+                    }
+                    if (hits.length) overlaps.push({ eventIndex: i, conflicts: hits });
+                    if (overlaps.length >= 10) break;
+                  }
+                  if (overlaps.length) {
+                    conflictsMeta = { conflicts: overlaps };
+                    try { conflictsAttach = 'conflicts:' + JSON.stringify({ conflicts: overlaps }); } catch {}
+                    content = `${content}\n(Heads-up: Some proposed times conflict with earlier plans.)`;
+                  }
+                } catch {}
+              }
+
               try {
                 const encEvents = (() => { try { return events.length ? 'events:' + JSON.stringify({ events }) : undefined; } catch { return undefined; } })();
                 const attachments = [];
                 if (encEvents) attachments.push(encEvents);
                 if (decisionsAttach) attachments.push(decisionsAttach);
+                if (conflictsAttach) attachments.push(conflictsAttach);
                 const metadata = (() => {
                   const base = events.length ? { events } : {};
-                  if (decisionsMeta) return { ...base, ...decisionsMeta };
-                  return Object.keys(base).length ? base : undefined;
+                  const withDecisions = decisionsMeta ? { ...base, ...decisionsMeta } : base;
+                  if (conflictsMeta) return { ...withDecisions, ...conflictsMeta };
+                  return Object.keys(withDecisions).length ? withDecisions : undefined;
                 })();
                 const posted = await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
                 console.log('[assistant] reply (openai) posted id:', posted?.id || '(none)');
                 logMetric('openai_success', 1);
                 if (posted && (!posted.messageType || !posted.updatedAt)) { await ensureMessageFields(posted.id, jwt).catch(() => {}); }
+                // Ensure metadata persisted even if backend ignores it on create
+                try {
+                  if (posted?.id && metadata && Object.keys(metadata).length) {
+                    const u = /* GraphQL */ `
+                      mutation UpdateMessage($input: UpdateMessageInput!) {
+                        updateMessage(input: $input) { id }
+                      }
+                    `;
+                    const input = { id: posted.id, metadata: JSON.stringify(metadata) };
+                    await signAndRequest({ query: u, variables: { input }, opName: 'updateMessage(metadata)', jwt });
+                  }
+                } catch {}
+                // Best-effort metadata update to handle backends that ignore metadata on create
+                try {
+                  if (posted?.id && metadata && Object.keys(metadata).length) {
+                    const u = /* GraphQL */ `
+                      mutation UpdateMessage($input: UpdateMessageInput!) {
+                        updateMessage(input: $input) { id }
+                      }
+                    `;
+                    const input = { id: posted.id, metadata: JSON.stringify(metadata) };
+                    await signAndRequest({ query: u, variables: { input }, opName: 'updateMessage(metadata)', jwt });
+                  }
+                } catch {}
               } catch (e) { console.warn('[assistant] openai post failed:', e?.message || e); }
               return respond(isHttp, 200, { ok: true });
             }
@@ -996,7 +1380,7 @@ exports.handler = async (event) => {
       'Sun 10:00 – Farmers market (grab veggies for dinner)',
       'Sun 13:00 – Quick pasta lunch',
     ];
-    const content = `${ASSISTANT_REPLY_PREFIX} Here’s a simple weekend plan based on what I saw: \n` +
+    let content = `${ASSISTANT_REPLY_PREFIX} Here’s a simple weekend plan based on what I saw: \n` +
       `• Focus: ${(lastUserMessage || 'family time').slice(0, 60)}\n` +
       plan.map(p => `• ${p}`).join('\n');
     // Include simple events for optional calendar export
@@ -1011,14 +1395,61 @@ exports.handler = async (event) => {
     ];
 
     try {
-      // Build attachments/metadata for events and optional decisions
+      // Build attachments/metadata for events and optional decisions/conflicts
       const encEvents = (() => { try { return 'events:' + JSON.stringify({ events }); } catch { return undefined; } })();
       const decisionsMeta = decisionsMetaGlobal;
       const decisionsAttach = decisionsAttachGlobal;
+      // Conflicts detection for fallback events
+      let conflictsMeta = undefined; let conflictsAttach = undefined;
+      if (ASSISTANT_CONFLICTS_ENABLED && Array.isArray(events) && events.length) {
+        try {
+          const prior = [];
+          for (const m of (recent || [])) {
+            try {
+              const metaPrev = toObjectJson(m?.metadata);
+              if (Array.isArray(metaPrev?.events)) { prior.push(...metaPrev.events); }
+              if (Array.isArray(m?.attachments)) {
+                const hitPrev = m.attachments.find(a => typeof a==='string' && String(a).startsWith('events:'));
+                if (hitPrev) { const objPrev = JSON.parse(String(hitPrev).slice('events:'.length)); if (Array.isArray(objPrev?.events)) prior.push(...objPrev.events); }
+              }
+            } catch {}
+            if (prior.length >= 50) break;
+          }
+          const overlaps = [];
+          for (let i = 0; i < events.length; i++) {
+            const e = events[i];
+            const s = new Date(e.startISO).getTime();
+            const en = new Date(e.endISO).getTime();
+            if (!Number.isFinite(s) || !Number.isFinite(en)) continue;
+            const hits = [];
+            for (const p of prior) {
+              const ps = new Date(p.startISO).getTime();
+              const pe = new Date(p.endISO).getTime();
+              if (!Number.isFinite(ps) || !Number.isFinite(pe)) continue;
+              if (s < pe && ps < en) hits.push({ title: p.title, startISO: p.startISO, endISO: p.endISO, source: 'assistant' });
+              if (hits.length >= 3) break;
+            }
+            if (hits.length) overlaps.push({ eventIndex: i, conflicts: hits });
+            if (overlaps.length >= 10) break;
+          }
+          if (overlaps.length) {
+            conflictsMeta = { conflicts: overlaps };
+            try { conflictsAttach = 'conflicts:' + JSON.stringify({ conflicts: overlaps }); } catch {}
+            content = `${content}\n(Heads-up: Some proposed times conflict with earlier plans.)`;
+          }
+        } catch {}
+      }
+
       const attachments = [];
       if (encEvents) attachments.push(encEvents);
       if (decisionsAttach) attachments.push(decisionsAttach);
-      const metadata = decisionsMeta ? { events, ...decisionsMeta } : { events };
+      if (conflictsAttach) attachments.push(conflictsAttach);
+      const metadata = (() => {
+        const base = { events };
+        const withDecisions = decisionsMeta ? { ...base, ...decisionsMeta } : base;
+        if (conflictsMeta) return { ...withDecisions, ...conflictsMeta };
+        return withDecisions;
+      })();
       const posted = await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
       console.log('[assistant] reply posted id:', posted?.id || '(none)');
       // If backend ignored fields, patch them immediately

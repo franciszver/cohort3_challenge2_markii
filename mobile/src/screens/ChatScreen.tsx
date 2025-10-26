@@ -175,14 +175,23 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                                             if (obj && Array.isArray(obj.events) && obj.events.length) {
                                                 meta = { ...(meta || {}), events: obj.events };
                                                 try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[meta] attachment events found =', obj.events.length); } catch {}
+                                                // Decorate message locally so CTA can render immediately
+                                                try {
+                                                    const decorated2 = { ...m, metadata: JSON.stringify({ ...(meta||{}), events: obj.events }) } as any;
+                                                    setMessages(prev => mergeDedupSort(prev, [decorated2]));
+                                                } catch {}
                                             }
                                         }
                                     } catch {}
                                 }
-								if (meta?.events && Array.isArray(meta.events) && meta.events.length) {
-									// Store marker in AsyncStorage so we can render a CTA row below this message (simple approach without schema change)
-									try { await AsyncStorage.setItem(`cal:${m.id}`, JSON.stringify({ events: meta.events })); } catch {}
-								}
+                                if (meta?.events && Array.isArray(meta.events) && meta.events.length) {
+                                    // Store marker and decorate message locally
+                                    try { await AsyncStorage.setItem(`cal:${m.id}`, JSON.stringify({ events: meta.events })); } catch {}
+                                    try {
+                                        const decorated = { ...m, metadata: JSON.stringify({ ...(meta||{}), events: meta.events }) } as any;
+                                        setMessages(prev => mergeDedupSort(prev, [decorated]));
+                                    } catch {}
+                                }
 							}
 						} catch {}
                         // Decisions CTA enrichment (flag-gated)
@@ -780,8 +789,45 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 												<TouchableOpacity
                                         onPress={async () => {
                                             try {
-															const perm = await Calendar.requestCalendarPermissionsAsync();
-															if (perm.status !== 'granted') { try { showToast('Calendar permission denied'); } catch {} return; }
+                                                        const perm = await Calendar.requestCalendarPermissionsAsync();
+                                                        if (perm.status !== 'granted') { try { showToast('Calendar permission denied'); } catch {} return; }
+                                                    // Conflicts pre-check and confirmation (flag-gated)
+                                                    try {
+                                                        const { ASSISTANT_CONFLICTS_ENABLED } = getFlags();
+                                                        if (ASSISTANT_CONFLICTS_ENABLED) {
+                                                            // Parse conflicts from metadata or sentinel
+                                                            let conflicts: any[] = [];
+                                                            try {
+                                                                const metaAny = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+                                                                conflicts = Array.isArray((metaAny as any)?.conflicts) ? (metaAny as any).conflicts : [];
+                                                            } catch {}
+                                                            // If not present, re-fetch full message a few times to allow backend metadata update
+                                                            if (!(conflicts && conflicts.length)) {
+                                                                for (let i = 0; i < 5 && !(conflicts && conflicts.length); i++) {
+                                                                    try {
+                                                                        const full = await getMessageById((item as any).id);
+                                                                        const meta2 = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
+                                                                        if (Array.isArray((meta2 as any)?.conflicts) && (meta2 as any).conflicts.length) {
+                                                                            conflicts = (meta2 as any).conflicts;
+                                                                            break;
+                                                                        }
+                                                                    } catch {}
+                                                                    const delay = 250 + i*300;
+                                                                    await new Promise(r => setTimeout(r, delay));
+                                                                }
+                                                            }
+                                                            if (!(conflicts && conflicts.length) && Array.isArray((item as any).attachments)) {
+                                                                try {
+                                                                    const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('conflicts:'));
+                                                                    if (hit) {
+                                                                        const payload = hit.slice('conflicts:'.length);
+                                                                        try { const obj = JSON.parse(payload); if (Array.isArray(obj?.conflicts) && obj.conflicts.length) conflicts = obj.conflicts; } catch {}
+                                                                    }
+                                                                } catch {}
+                                                            }
+                                                            if (conflicts && conflicts.length) { try { showToast(`Conflicts detected with ${conflicts.length} item(s)`); } catch {} }
+                                                        }
+                                                    } catch {}
                                                 // Prefer saved target id
                                                 try { calTargetIdRef.current = (await AsyncStorage.getItem('calendar:target')) || null; } catch {}
                                                 if (!calTargetIdRef.current) {
@@ -812,8 +858,22 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 													}}
 													style={{ marginTop: 4 }}
 												>
-													<Text style={{ color: '#3b82f6', fontWeight: '600' }}>Add to calendar</Text>
+                                                <Text style={{ color: '#3b82f6', fontWeight: '600' }}>Add to calendar</Text>
 												</TouchableOpacity>
+                                                {(() => { try {
+                                                    const { ASSISTANT_CONFLICTS_ENABLED } = getFlags();
+                                                    if (!ASSISTANT_CONFLICTS_ENABLED) return null;
+                                                    const metaAny = (() => { try { return typeof (item as any).metadata === 'string' ? JSON.parse((item as any).metadata) : ((item as any).metadata || {}); } catch { return {}; } })();
+                                                    let conflicts = Array.isArray((metaAny as any)?.conflicts) ? (metaAny as any).conflicts : [];
+                                                    if (!(conflicts && conflicts.length) && Array.isArray((item as any).attachments)) {
+                                                        try {
+                                                            const hit = (item as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('conflicts:'));
+                                                            if (hit) { const payload = hit.slice('conflicts:'.length); const obj = JSON.parse(payload); if (Array.isArray(obj?.conflicts) && obj.conflicts.length) conflicts = obj.conflicts; }
+                                                        } catch {}
+                                                    }
+                                                    if (!(conflicts && conflicts.length)) return null;
+                                                    return <Text style={{ color: '#ef4444', marginTop: 4 }}>Conflicts detected</Text>;
+                                                } catch { return null; } })()}
 											</View>
 										);
 									} catch { return null; } })()}

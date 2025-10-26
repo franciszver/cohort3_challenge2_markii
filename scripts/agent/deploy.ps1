@@ -8,7 +8,10 @@ Param(
   [Parameter(Mandatory=$false)][switch]$EnableOpenAI,
   [Parameter(Mandatory=$false)][switch]$EnableRecipes,
   [Parameter(Mandatory=$false)][switch]$EnableDecisions,
-  [Parameter(Mandatory=$false)][string]$OpenAIModel = 'gpt-4o-mini'
+  [Parameter(Mandatory=$false)][switch]$EnableConflicts,
+  [Parameter(Mandatory=$false)][string]$ApiId,
+  [Parameter(Mandatory=$false)][string]$OpenAIModel = 'gpt-4o-mini',
+  [Parameter(Mandatory=$false)][switch]$DebugLogs
 )
 
 Set-StrictMode -Version Latest
@@ -37,6 +40,7 @@ Compress-Archive -Force -Path dist/assistant.js -DestinationPath dist/assistant.
 $flagOpenAI = if ($EnableOpenAI) { 'true' } else { 'false' }
 $flagRecipes = if ($EnableRecipes) { 'true' } else { 'false' }
 $flagDecisions = if ($EnableDecisions) { 'true' } else { 'false' }
+$flagConflicts = if ($EnableConflicts) { 'true' } else { 'false' }
 $envVarsHash = @{
   APPSYNC_ENDPOINT = $AppSyncEndpoint
   ASSISTANT_BOT_USER_ID = 'assistant-bot'
@@ -44,8 +48,10 @@ $envVarsHash = @{
   ASSISTANT_OPENAI_ENABLED = $flagOpenAI
   ASSISTANT_RECIPE_ENABLED = $flagRecipes
   ASSISTANT_DECISIONS_ENABLED = $flagDecisions
+  ASSISTANT_CONFLICTS_ENABLED = $flagConflicts
   OPENAI_MODEL = $OpenAIModel
 }
+if ($DebugLogs) { $envVarsHash['DEBUG_LOGS'] = 'true' }
 if ($OpenAISecretArn) { $envVarsHash['OPENAI_SECRET_ARN'] = $OpenAISecretArn }
 if ($OpenAIApiKey) { $envVarsHash['OPENAI_API_KEY'] = $OpenAIApiKey }
 $envObj = @{ Variables = $envVarsHash }
@@ -110,29 +116,40 @@ try {
   aws lambda update-function-configuration --function-name $fnName --timeout 10 --memory-size 256 --environment file://$envFile | Out-Null
 }
 
-# HTTP API
+# HTTP API (find-or-create; prefer provided ApiId to keep endpoint stable)
 $apiName = 'assistant-mvp'
-$apiId = (aws apigatewayv2 create-api --name $apiName --protocol-type HTTP --target "arn:aws:lambda:${Region}:${acct}:function:${fnName}" --output json | ConvertFrom-Json).ApiId
-if (-not $apiId) {
-  $existing = (aws apigatewayv2 get-apis --output json | ConvertFrom-Json).Items | Where-Object { $_.Name -eq $apiName }
-  if ($existing) { $apiId = $existing.ApiId }
+if (-not $ApiId) {
+  $existingId = (aws apigatewayv2 get-apis --query "Items[?Name=='$apiName'].ApiId | [0]" --output text 2>$null)
+  if ($existingId -and $existingId -ne 'None') { $ApiId = $existingId }
 }
-if (-not $apiId) { throw 'Failed to create or locate HTTP API.' }
+if (-not $ApiId) {
+  $ApiId = (aws apigatewayv2 create-api --name $apiName --protocol-type HTTP --target "arn:aws:lambda:${Region}:${acct}:function:${fnName}" --query ApiId --output text)
+}
+if (-not $ApiId) { throw 'Failed to create or locate HTTP API.' }
 
-# Create Lambda integration for specific route
+# Create/ensure Lambda integration for specific route (upsert)
 $fnArn = "arn:aws:lambda:${Region}:${acct}:function:${fnName}"
-$intId = (aws apigatewayv2 create-integration --api-id $apiId --integration-type AWS_PROXY --integration-uri $fnArn --payload-format-version 2.0 --output json | ConvertFrom-Json).IntegrationId
-try { aws apigatewayv2 create-route --api-id $apiId --route-key 'POST /agent/weekend-plan' --target "integrations/$intId" | Out-Null } catch {}
+$intId = (aws apigatewayv2 create-integration --api-id $ApiId --integration-type AWS_PROXY --integration-uri $fnArn --payload-format-version 2.0 --query IntegrationId --output text 2>$null)
+if (-not $intId -or $intId -eq 'None') {
+  $intId = (aws apigatewayv2 get-integrations --api-id $ApiId --query 'Items[0].IntegrationId' --output text 2>$null)
+}
+$routeId = (aws apigatewayv2 get-routes --api-id $ApiId --query "Items[?RouteKey=='POST /agent/weekend-plan'].RouteId | [0]" --output text 2>$null)
+if ($routeId -and $routeId -ne 'None') {
+  aws apigatewayv2 update-route --api-id $ApiId --route-id $routeId --target "integrations/$intId" | Out-Null
+} else {
+  try { aws apigatewayv2 create-route --api-id $ApiId --route-key 'POST /agent/weekend-plan' --target "integrations/$intId" | Out-Null } catch {}
+}
 
-# Deploy stage
-$depId = (aws apigatewayv2 create-deployment --api-id $apiId --output json | ConvertFrom-Json).DeploymentId
-try { aws apigatewayv2 create-stage --api-id $apiId --stage-name prod --deployment-id $depId | Out-Null } catch {}
+# Deploy stage (idempotent)
+$depId = (aws apigatewayv2 create-deployment --api-id $ApiId --query DeploymentId --output text)
+try { aws apigatewayv2 create-stage --api-id $ApiId --stage-name prod --deployment-id $depId | Out-Null } catch {}
 
-# Lambda permission for API Gateway invocation
-$srcArn = "arn:aws:execute-api:${Region}:${acct}:${apiId}/*/POST/agent/weekend-plan"
-try { aws lambda add-permission --function-name $fnName --statement-id AllowInvokeFromHttpApi --action lambda:InvokeFunction --principal apigateway.amazonaws.com --source-arn $srcArn | Out-Null } catch {}
+# Lambda permission for API Gateway invocation (unique statement id to avoid conflicts)
+$srcArn = "arn:aws:execute-api:${Region}:${acct}:${ApiId}/*/POST/agent/weekend-plan"
+$statementId = "AllowInvokeFromHttpApi_" + ([Guid]::NewGuid().ToString('N'))
+try { aws lambda add-permission --function-name $fnName --statement-id $statementId --action lambda:InvokeFunction --principal apigateway.amazonaws.com --source-arn $srcArn | Out-Null } catch {}
 
-$baseUrl = "https://${apiId}.execute-api.${Region}.amazonaws.com/prod"
+$baseUrl = "https://${ApiId}.execute-api.${Region}.amazonaws.com/prod"
 Write-Host "Assistant endpoint: $baseUrl" -ForegroundColor Green
 
 
