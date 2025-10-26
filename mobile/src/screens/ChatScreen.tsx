@@ -77,6 +77,7 @@ const [isSendingMsg, setIsSendingMsg] = useState(false);
 const [assistantPending, setAssistantPending] = useState(false);
 const assistantTimerRef = useRef<any>(null);
 	const latestRefreshInFlightRef = useRef(false);
+	const prevParticipantCountRef = useRef(0);
 // Calendar picker state
 const [calPickVisible, setCalPickVisible] = useState(false);
 const [calChoices, setCalChoices] = useState<any[]>([]);
@@ -590,8 +591,33 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					}
 				} catch {}
 		})();
-        return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); presenceSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); try { if (drainIntervalRef.current) clearInterval(drainIntervalRef.current); } catch {}; try { (drainIntervalRef as any).unsubNet?.(); } catch {}; try { (drainIntervalRef as any).subApp?.remove?.(); } catch {}; };
+		return () => { subRef.current?.unsubscribe?.(); typingSubRef.current?.unsubscribe?.(); receiptsSubRef.current?.unsubscribe?.(); deleteSubRef.current?.unsubscribe?.(); presenceSubRef.current?.unsubscribe?.(); if (typingTimerRef.current) clearTimeout(typingTimerRef.current); try { if (drainIntervalRef.current) clearInterval(drainIntervalRef.current); } catch {}; try { (drainIntervalRef as any).unsubNet?.(); } catch {}; try { (drainIntervalRef as any).subApp?.remove?.(); } catch {}; };
 	}, []);
+
+	// Track participant count transitions and show system message when moving to multi-user
+	useEffect(() => {
+		const currentCount = participantIds.length;
+		const prevCount = prevParticipantCountRef.current;
+		
+		// Transition from solo (≤2) to multi-user (>2)
+		if (prevCount > 0 && prevCount <= 2 && currentCount > 2) {
+			const isAssistantConvo = (providedConversationId || '').startsWith('assistant::');
+			if (isAssistantConvo) {
+				const systemMsg = {
+					id: `system-transition-${Date.now()}`,
+					content: "💡 Now that others joined, use @Ai to ask assistant",
+					senderId: 'system',
+					createdAt: new Date().toISOString(),
+					messageType: 'TEXT',
+					_isSystemMsg: true,
+				};
+				setMessages(prev => [systemMsg, ...prev]);
+			}
+		}
+		
+		// Update ref for next check
+		prevParticipantCountRef.current = currentCount;
+	}, [participantIds.length, providedConversationId]);
 
 	// Final trailing lastRead write on blur
 	useEffect(() => {
@@ -656,6 +682,28 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			if (!trimmed) { return; }
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
+			
+			// Solo/multi-user detection for @Ai triggering
+			const isMultiUser = participantIds.length > 2;
+			const isAiMention = /^@ai\b/i.test(trimmed);
+			const isAssistantConvo = (() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED && (providedConversationId || '').startsWith('assistant::'); } catch { return false; } })();
+			
+			let messageText = trimmed;
+			let shouldTriggerAssistant = false;
+			
+			if (isAssistantConvo) {
+				if (isMultiUser) {
+					// Multi-user: require @Ai, keep prefix
+					shouldTriggerAssistant = isAiMention;
+				} else {
+					// Solo: always trigger, strip @Ai if present
+					shouldTriggerAssistant = true;
+					if (isAiMention) {
+						messageText = trimmed.replace(/^@ai\s*/i, '');
+					}
+				}
+			}
+			
 			// Pre-send barrier: ensure participant records exist so recipients can read immediately
 			try {
 				const { listParticipantsForConversation, ensureParticipant } = await import('../graphql/conversations');
@@ -690,7 +738,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				conversationId: cid,
 				createdAt: new Date().toISOString(),
 				senderId: me.userId,
-				content: trimmed,
+				content: messageText,
 				messageType: 'TEXT',
 				_localStatus: 'PENDING',
                 metadata: JSON.stringify({ email: myEmail || '' }),
@@ -735,14 +783,14 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			const snapshot = (prev => [optimistic, ...prev])(messages);
 			AsyncStorage.setItem(`history:${cid}`, JSON.stringify(snapshot)).catch(() => {});
             try { const { ENABLE_CHAT_UX } = getFlags(); if (ENABLE_CHAT_UX) await AsyncStorage.removeItem(`draft:${cid}`); } catch {}
-			// Assistant hook: if this is an assistant conversation, ping the agent endpoint (non-blocking)
+			// Assistant hook: if this is an assistant conversation and shouldTriggerAssistant, ping the agent endpoint (non-blocking)
 			try {
-				const { ASSISTANT_ENABLED } = getFlags();
-				if (ASSISTANT_ENABLED && (providedConversationId || '').startsWith('assistant::')) {
+				if (shouldTriggerAssistant) {
 					const extra: any = Constants.expoConfig?.extra || (Constants as any).manifest?.extra || {};
 					const base = (extra.ASSISTANT_ENDPOINT || '').replace(/\/$/, '');
 					if (base) {
-						const req = { requestId: localId, conversationId: cid, userId: me.userId, text: optimistic.content };
+						// Send original trimmed text to assistant for full context
+						const req = { requestId: localId, conversationId: cid, userId: me.userId, text: trimmed };
                         try {
                             const { DEBUG_LOGS } = getFlags();
                             if (DEBUG_LOGS) {
@@ -858,9 +906,9 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                         </TouchableOpacity>
 					</View>
 				</SafeAreaView>
-				{isTyping ? <Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>typing…</Text> : null}
-				{(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
-					<Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>Assistant is thinking…</Text>
+			{isTyping ? <Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>typing…</Text> : null}
+			{(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
+				<Text style={{ paddingHorizontal: theme.spacing.md, color: theme.colors.muted }}>AI is responding…</Text>
             ) : null}
 			<FlatList
 				inverted
@@ -912,7 +960,13 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 				}}
 				renderItem={({ item }: any) => (
 					<View style={{ padding: 8, flexDirection: 'row', alignItems: 'flex-start', width: '100%' }}>
-						{item.messageType === 'IMAGE' && item.attachments?.[0] ? (
+						{item._isSystemMsg ? (
+							<View style={{ width: '100%', alignItems: 'center', paddingVertical: 8 }}>
+								<Text style={{ color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center', fontStyle: 'italic' }}>
+									{item.content}
+								</Text>
+							</View>
+						) : item.messageType === 'IMAGE' && item.attachments?.[0] ? (
 							<Image
 								source={{ uri: item.attachments[0] }}
 								style={[{ width: 200, height: 200, borderRadius: 8 }, item.senderId !== myId ? { marginLeft: 'auto' } : null]}
@@ -954,9 +1008,13 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                                                 const label = isMe ? 'you' : (userIdToEmail[item.senderId] || '');
                                                 const edited = item.editedAt ? ' · edited' : '';
                                                 const suffix = label ? ` · ${label}` : '';
+                                                const isMultiUser = participantIds.length > 2;
+                                                const isAiMention = /^@ai\b/i.test(String(item.content || ''));
+                                                const showAiBadge = isMultiUser && isAiMention;
+                                                const aiBadge = showAiBadge ? ' → AI' : '';
                                                 return (
                                                     <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }} numberOfLines={1}>
-                                                        {formatTimestamp(item.createdAt)}{edited}{suffix}
+                                                        {formatTimestamp(item.createdAt)}{edited}{suffix}{aiBadge}
                                                     </Text>
                                                 );
                                             })()}
@@ -1310,7 +1368,11 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					style={{ flex: 1, borderWidth: 1, padding: theme.spacing.sm, borderColor: theme.colors.border, backgroundColor: theme.colors.inputBackground, borderRadius: theme.radii.md }}
 					value={input}
 					onChangeText={onChangeInput}
-					placeholder="Message"
+					placeholder={(() => {
+						const isAssistantConvo = (providedConversationId || '').startsWith('assistant::');
+						const isMultiUser = participantIds.length > 2;
+						return isAssistantConvo && isMultiUser ? "@Ai for assistant" : "Message";
+					})()}
 					returnKeyType="send"
 					blurOnSubmit={false}
 					onSubmitEditing={() => { onSend(); messageInputRef.current?.focus?.(); }}
