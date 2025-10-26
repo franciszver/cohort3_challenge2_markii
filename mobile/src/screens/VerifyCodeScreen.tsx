@@ -77,7 +77,7 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
             autoCapitalize="none"
             keyboardType="email-address"
             returnKeyType="next"
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: theme.colors.border, borderRadius: theme.radii.md }}
           />
 
           <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>Verification code</Text>
@@ -90,13 +90,13 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
             onFocus={() => setCodeFocused(true)}
             onBlur={() => setCodeFocused(false)}
             onSubmitEditing={() => { if (email && code && !confirming) onConfirm(); }}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: codeFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: codeFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
           />
 
           <TouchableOpacity
             onPress={onConfirm}
             disabled={!email || !code || confirming}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || !code || confirming) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || !code || confirming) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Confirm verification"
           >
@@ -106,7 +106,7 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Confirming…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Confirm</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Confirm</Text>
             )}
           </TouchableOpacity>
 
@@ -115,7 +115,7 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
           <TouchableOpacity
             onPress={onResend}
             disabled={!email || isResending}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || isResending) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || isResending) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Resend verification code"
           >
@@ -125,11 +125,11 @@ export default function VerifyCodeScreen({ route, navigation }: any) {
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Resending…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Resend Code</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Resend Code</Text>
             )}
           </TouchableOpacity>
 
-          {error ? <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
+          {error ? <Text style={{ color: theme.colors.danger, marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
           {log ? (
             <View style={{ marginTop: 12 }}>
               <Text style={{ fontWeight: '600' }}>Logs:</Text>

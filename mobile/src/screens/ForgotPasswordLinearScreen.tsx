@@ -64,12 +64,12 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
                 onFocus={() => setEmailFocused(true)}
                 onBlur={() => setEmailFocused(false)}
                 onSubmitEditing={() => { if (email && !busy && isOnline) onRequest(); }}
-                style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+                style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
               />
               <TouchableOpacity
                 onPress={onRequest}
                 disabled={!email || busy || !isOnline}
-                style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || busy || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+                style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || busy || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel="Send password reset code"
               >
@@ -79,7 +79,7 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
                     <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sending…</Text>
                   </View>
                 ) : (
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send Code</Text>
+                  <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Send Code</Text>
                 )}
               </TouchableOpacity>
             </>
@@ -95,7 +95,7 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
                 returnKeyType="next"
                 onFocus={() => setCodeFocused(true)}
                 onBlur={() => setCodeFocused(false)}
-                style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: codeFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+                style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: codeFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
               />
               <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>New password</Text>
               <View style={{ position: 'relative', marginBottom: 8 }}>
@@ -108,7 +108,7 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
                   onFocus={() => setPasswordFocused(true)}
                   onBlur={() => setPasswordFocused(false)}
                   onSubmitEditing={() => { if (code && password && !busy && isOnline) onConfirm(); }}
-                  style={{ borderWidth: 1, padding: 10, paddingRight: 64, backgroundColor: 'white', borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+                  style={{ borderWidth: 1, padding: theme.spacing.sm, paddingRight: 64, backgroundColor: theme.colors.inputBackground, borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(v=>!v)} accessibilityLabel={showPassword ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 8, top: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
                   <Text style={{ fontWeight: '600', color: theme.colors.textPrimary }}>{showPassword ? 'Hide' : 'Show'}</Text>
@@ -117,7 +117,7 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
               <TouchableOpacity
                 onPress={onConfirm}
                 disabled={!code || !password || busy || !isOnline}
-                style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!code || !password || busy || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+                style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!code || !password || busy || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel="Submit new password"
               >
@@ -127,13 +127,13 @@ export default function ForgotPasswordLinearScreen({ navigation }: any) {
                     <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submitting…</Text>
                   </View>
                 ) : (
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submit</Text>
+                  <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Submit</Text>
                 )}
               </TouchableOpacity>
             </>
           ) : null}
 
-          {error ? <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
+          {error ? <Text style={{ color: theme.colors.danger, marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
         </View>
       </Animated.View>
     </View>

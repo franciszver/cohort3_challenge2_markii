@@ -23,13 +23,13 @@ export default function ForgotPasswordCodeScreen({ route, navigation }: any) {
             onFocus={() => setCodeFocused(true)}
             onBlur={() => setCodeFocused(false)}
             onSubmitEditing={() => { if (code && !isContinuing) { setIsContinuing(true); navigation.navigate('ForgotPasswordNew', { email, code }); setIsContinuing(false); } }}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: codeFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: codeFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
           />
 
           <TouchableOpacity
             onPress={() => { if (!code) return; setIsContinuing(true); navigation.navigate('ForgotPasswordNew', { email, code }); setIsContinuing(false); }}
             disabled={!code || isContinuing}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!code || isContinuing) ? 0.6 : 1 }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!code || isContinuing) ? 0.6 : 1 }}
             accessibilityLabel="Continue to set new password"
           >
             {isContinuing ? (
@@ -38,7 +38,7 @@ export default function ForgotPasswordCodeScreen({ route, navigation }: any) {
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Continuing…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Continue</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Continue</Text>
             )}
           </TouchableOpacity>
         </View>

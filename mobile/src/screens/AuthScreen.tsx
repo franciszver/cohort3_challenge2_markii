@@ -143,7 +143,7 @@ export default function AuthScreen({ navigation }: any) {
       navigation.replace('Conversations', { fromAuth: true });
     } catch (e: any) {
       appendLog('signIn error', { name: e?.name, message: e?.message, code: e?.code, raw: e, stack: e?.stack, cause: e?.cause });
-      appendLog('env extra', (Constants.expoConfig?.extra || Constants.manifest?.extra || {}));
+      appendLog('env extra', (Constants.expoConfig?.extra || (Constants as any).manifest?.extra || {}));
       const { ENABLE_AUTH_ERROR_MAP, ENABLE_AUTH_VERIFICATION_INLINE } = getFlags();
       const codeName = e?.code || e?.name;
       if (ENABLE_AUTH_ERROR_MAP && (codeName === 'UserNotConfirmedException' || codeName === 'UserNotConfirmed' || codeName === 'UserUnconfirmedException')) {
@@ -185,7 +185,7 @@ export default function AuthScreen({ navigation }: any) {
       {mode !== 'initial' ? (
         <View style={{ marginBottom: 8 }}>
           <TouchableOpacity accessibilityLabel="Back to start" onPress={() => { setMode('initial'); setPassword(''); setError(null); }}>
-            <Text style={{ fontSize: 16, color: '#4B5563' }}>{'← Back'}</Text>
+            <Text style={{ fontSize: 16, color: theme.colors.link }}>{'← Back'}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -204,9 +204,9 @@ export default function AuthScreen({ navigation }: any) {
             onFocus={() => setEmailFocused(true)}
             onBlur={() => setEmailFocused(false)}
             onChangeText={(t)=>{ setEmail(t); try { if (getFlags().ENABLE_AUTH_UX) AsyncStorage.setItem('auth:email', t.trim()); } catch {} }}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
           />
-      {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && emailError ? (<Text style={{ color: 'red', marginBottom: 8 }}>{emailError}</Text>) : null; })()}
+      {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && emailError ? (<Text style={{ color: theme.colors.danger, marginBottom: 8 }}>{emailError}</Text>) : null; })()}
       {mode !== 'initial' ? (
         <>
           <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>Password</Text>
@@ -220,21 +220,21 @@ export default function AuthScreen({ navigation }: any) {
               onFocus={() => setPasswordFocused(true)}
               onBlur={() => setPasswordFocused(false)}
               onSubmitEditing={() => { if (mode === 'signin') onSignIn(); else if (mode === 'signup') onSignUp(); }}
-              style={{ borderWidth: 1, padding: 10, paddingRight: 64, backgroundColor: 'white', borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+              style={{ borderWidth: 1, padding: theme.spacing.sm, paddingRight: 64, backgroundColor: theme.colors.inputBackground, borderColor: passwordFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
             />
             <TouchableOpacity onPress={() => setShowPassword(v => !v)} accessibilityLabel={showPassword ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 8, top: 8, paddingVertical: 6, paddingHorizontal: 8 }}>
               <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{showPassword ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
           {mode === 'signup' ? (
-            <Text style={{ color: '#374151', marginBottom: 4 }}>Please choose a password to create your account.</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>Please choose a password to create your account.</Text>
           ) : null}
-          {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && passwordError ? (<Text style={{ color: 'red', marginBottom: 12 }}>{passwordError}</Text>) : null; })()}
+          {(() => { const { ENABLE_AUTH_UX } = getFlags(); return ENABLE_AUTH_UX && passwordError ? (<Text style={{ color: theme.colors.danger, marginBottom: 12 }}>{passwordError}</Text>) : null; })()}
         </>
       ) : null}
       {(() => { const { ENABLE_AUTH_VERIFICATION_INLINE } = getFlags(); return (ENABLE_AUTH_VERIFICATION_INLINE && unverified) ? (
-        <View style={{ padding: 8, backgroundColor: '#f0f9ff', borderWidth: 1, borderColor: '#bae6fd', borderRadius: 6, marginBottom: 12 }}>
-          <Text style={{ color: '#0369a1', marginBottom: 8 }}>Your email isn’t verified.</Text>
+        <View style={{ padding: 8, backgroundColor: theme.colors.inputBackground, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, marginBottom: 12 }}>
+          <Text style={{ color: theme.colors.link, marginBottom: 8 }}>Your email isn’t verified.</Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <Button title="Resend code" onPress={async () => { try { const { resendSignUpCode } = await import('aws-amplify/auth'); await resendSignUpCode({ username: unverified }); } catch {} }} />
             <Button title="Enter code" onPress={() => navigation.navigate('VerifyCode', { email: unverified, password })} color={theme.colors.primary} />
@@ -247,20 +247,20 @@ export default function AuthScreen({ navigation }: any) {
             <TouchableOpacity
               onPress={() => { setMode('signin'); setError(null); }}
               disabled={!isOnline}
-              style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !isOnline ? 0.6 : 1 }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !isOnline ? 0.6 : 1 }}
               accessibilityLabel="Go to sign in"
             >
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sign In</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Sign In</Text>
             </TouchableOpacity>
           </View>
           <View style={{ flex: 1 }}>
             <TouchableOpacity
               onPress={() => { setMode('signup'); setError(null); }}
               disabled={!isOnline}
-              style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !isOnline ? 0.6 : 1 }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !isOnline ? 0.6 : 1 }}
               accessibilityLabel="Go to sign up"
             >
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sign Up</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Sign Up</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -271,17 +271,17 @@ export default function AuthScreen({ navigation }: any) {
           <TouchableOpacity
             onPress={onSignIn}
             disabled={isSignedIn || signingIn || !isOnline}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (isSignedIn || signingIn || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (isSignedIn || signingIn || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Enter"
           >
             {signingIn ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <ActivityIndicator size="small" color={theme.colors.textPrimary} />
-                <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Entering…</Text>
+                <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Entering…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Enter</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Enter</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -292,17 +292,17 @@ export default function AuthScreen({ navigation }: any) {
           <TouchableOpacity
             onPress={onSignUp}
             disabled={signingUp || !isOnline}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (signingUp || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (signingUp || !isOnline) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Submit sign up"
           >
             {signingUp ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <ActivityIndicator size="small" color={theme.colors.textPrimary} />
-                <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submitting…</Text>
+                <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Submitting…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submit</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Submit</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -310,7 +310,7 @@ export default function AuthScreen({ navigation }: any) {
 
       {mode === 'signin' ? (
         <View style={{ flexDirection: 'row', justifyContent: 'flex-start', marginTop: 12 }}>
-          <TouchableOpacity onPress={onForgotPassword}><Text style={{ color: '#0284c7', fontWeight: '600' }}>Forgot password?</Text></TouchableOpacity>
+          <TouchableOpacity onPress={onForgotPassword}><Text style={{ color: theme.colors.link, fontWeight: '600' }}>Forgot password?</Text></TouchableOpacity>
         </View>
       ) : null}
 
@@ -321,7 +321,7 @@ export default function AuthScreen({ navigation }: any) {
         ) : null}
 
         {error ? (
-          <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>Error: {error}</Text>
+          <Text style={{ color: theme.colors.danger, marginTop: 12, textAlign: 'center' }}>Error: {error}</Text>
         ) : null}
 
         {null}
@@ -333,7 +333,7 @@ export default function AuthScreen({ navigation }: any) {
   const { ENABLE_AUTH_GRADIENT_BG } = getFlags();
   if (ENABLE_AUTH_GRADIENT_BG) {
     return (
-      <LinearGradient colors={["#FAF8F4", "#FFFFFF"]} style={{ flex: 1 }}>
+      <LinearGradient colors={[theme.colors.background, theme.colors.surface]} style={{ flex: 1 }}>
         {Body}
       </LinearGradient>
     );

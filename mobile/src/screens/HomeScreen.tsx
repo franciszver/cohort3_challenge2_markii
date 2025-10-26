@@ -74,7 +74,7 @@ export default function HomeScreen({ navigation }: any) {
           </View>
         </View>
         {mySub ? <Text style={{ marginBottom: 8 }} selectable>My sub: {mySub}</Text> : null}
-        {copyMsg ? <Text style={{ color: 'green', marginBottom: 8 }}>{copyMsg}</Text> : null}
+        {copyMsg ? <Text style={{ color: '#16a34a', marginBottom: 8 }}>{copyMsg}</Text> : null}
         <Text style={{ marginTop: 8, marginBottom: 4 }}>Other user sub</Text>
         <TextInput
           placeholder="Enter other user's Cognito sub"
@@ -105,7 +105,7 @@ export default function HomeScreen({ navigation }: any) {
         />
         <View style={{ height: 8 }} />
         <Button title="Open Conversations" onPress={() => navigation.navigate('Conversations')} />
-        {lookupError ? <Text style={{ color: 'red', marginTop: 8 }}>{lookupError}</Text> : null}
+        {lookupError ? <Text style={{ color: '#ef4444', marginTop: 8 }}>{lookupError}</Text> : null}
         {lookupLog ? (
           <View style={{ marginTop: 8 }}>
             <Text style={{ fontWeight: '600' }}>Lookup debug:</Text>

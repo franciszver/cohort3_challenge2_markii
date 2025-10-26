@@ -133,3 +133,26 @@ export async function batchGetUsersCached(userIds: string[], ttlMs = 5 * 60 * 10
   await Promise.all(p);
   return results;
 }
+
+// Seed the in-memory cache with a map of { userId -> email } to reduce future lookups
+export function seedUserEmailCache(entries: Record<string, string>, ttlMs = 5 * 60 * 1000) {
+  const now = Date.now();
+  for (const [id, email] of Object.entries(entries || {})) {
+    if (!id || !email) continue;
+    try {
+      userCache.set(id, { user: { id, email }, expiresAt: now + ttlMs });
+    } catch {}
+  }
+}
+
+// Snapshot a simple id->email map from the current in-memory cache (valid entries only)
+export function getEmailCacheSnapshot(): Record<string, string> {
+  const now = Date.now();
+  const out: Record<string, string> = {};
+  for (const [id, entry] of userCache.entries()) {
+    try {
+      if (entry?.expiresAt > now && entry?.user?.email) out[id] = entry.user.email;
+    } catch {}
+  }
+  return out;
+}

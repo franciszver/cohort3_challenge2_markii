@@ -48,13 +48,13 @@ export default function ForgotPasswordRequestScreen({ navigation }: any) {
             onFocus={() => setEmailFocused(true)}
             onBlur={() => setEmailFocused(false)}
             onSubmitEditing={() => { if (email && !isSending) onSubmit(); }}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: emailFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
           />
 
           <TouchableOpacity
             onPress={onSubmit}
             disabled={!email || isSending}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || isSending) ? 0.6 : 1 }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!email || isSending) ? 0.6 : 1 }}
             accessibilityLabel="Send password reset code"
           >
             {isSending ? (
@@ -63,11 +63,11 @@ export default function ForgotPasswordRequestScreen({ navigation }: any) {
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sending…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Send Code</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Send Code</Text>
             )}
           </TouchableOpacity>
 
-          {error ? <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
+          {error ? <Text style={{ color: theme.colors.danger, marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
           {log ? (
             <View style={{ marginTop: 12 }}>
               <Text style={{ fontWeight: '600' }}>Logs:</Text>

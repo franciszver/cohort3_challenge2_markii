@@ -46,7 +46,7 @@ export default function ForgotPasswordNewPasswordScreen({ route, navigation }: a
             onChangeText={setPassword}
             onFocus={() => setPwFocused(true)}
             onBlur={() => setPwFocused(false)}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: pwFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: pwFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
           />
           <Text style={{ marginBottom: 6, color: theme.colors.textSecondary }}>Confirm new password</Text>
           <TextInput
@@ -57,15 +57,15 @@ export default function ForgotPasswordNewPasswordScreen({ route, navigation }: a
             onFocus={() => setConfirmFocused(true)}
             onBlur={() => setConfirmFocused(false)}
             onSubmitEditing={() => { if (password && confirm && !busy) onSubmit(); }}
-            style={{ borderWidth: 1, padding: 10, marginBottom: 8, backgroundColor: 'white', borderColor: confirmFocused ? theme.colors.primary : theme.colors.border, borderRadius: 8 }}
+            style={{ borderWidth: 1, padding: theme.spacing.sm, marginBottom: 8, backgroundColor: theme.colors.inputBackground, borderColor: confirmFocused ? theme.colors.primary : theme.colors.border, borderRadius: theme.radii.md }}
           />
 
-          {error ? <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
+          {error ? <Text style={{ color: theme.colors.danger, marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
 
           <TouchableOpacity
             onPress={onSubmit}
             disabled={!password || !confirm || busy}
-            style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!password || !confirm || busy) ? 0.6 : 1 }}
+            style={{ backgroundColor: theme.colors.buttonPrimaryBg, padding: 12, borderRadius: theme.radii.md, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!password || !confirm || busy) ? 0.6 : 1 }}
             accessibilityLabel="Submit new password"
           >
             {busy ? (
@@ -74,7 +74,7 @@ export default function ForgotPasswordNewPasswordScreen({ route, navigation }: a
                 <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submitting…</Text>
               </View>
             ) : (
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Submit</Text>
+              <Text style={{ color: theme.colors.buttonPrimaryText, fontWeight: '600' }}>Submit</Text>
             )}
           </TouchableOpacity>
         </View>

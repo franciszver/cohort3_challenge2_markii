@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert } from 'react-native';
+import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
@@ -18,7 +18,7 @@ import { generateLocalId } from '../utils/ids';
 import { getFlags } from '../utils/flags';
 import Constants from 'expo-constants';
 import { getUserProfile } from '../graphql/profile';
-import { getUserById, batchGetUsersCached } from '../graphql/users';
+import { getUserById, batchGetUsersCached, getEmailCacheSnapshot } from '../graphql/users';
 import Avatar from '../components/Avatar';
 import { useTheme } from '../utils/theme';
 
@@ -66,6 +66,7 @@ const [otherLastSeen, setOtherLastSeen] = useState<string | undefined>(undefined
 const [isSendingMsg, setIsSendingMsg] = useState(false);
 const [assistantPending, setAssistantPending] = useState(false);
 const assistantTimerRef = useRef<any>(null);
+	const latestRefreshInFlightRef = useRef(false);
 // Calendar picker state
 const [calPickVisible, setCalPickVisible] = useState(false);
 const [calChoices, setCalChoices] = useState<any[]>([]);
@@ -79,6 +80,35 @@ const [recipesItems, setRecipesItems] = useState<any[]>([]);
 const [decisionsVisible, setDecisionsVisible] = useState(false);
 const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 
+	// Ensure emails for a set of user ids using multiple sources
+	async function ensureEmails(userIds: string[]) {
+		try {
+			const ids = Array.from(new Set((userIds || []).filter(Boolean)));
+			const missing = ids.filter(id => !userIdToEmail[id]);
+			if (!missing.length) return;
+			// First: Users table (batch)
+			let map: Record<string, string> = {};
+			try {
+				const usersMap = await batchGetUsersCached(missing);
+				for (const uid of Object.keys(usersMap || {})) {
+					const u = (usersMap as any)[uid];
+					if (u?.email) map[uid] = u.email;
+				}
+			} catch {}
+			// Second: Profiles table (per id)
+			for (const uid of missing) {
+				if (map[uid]) continue;
+				try {
+					const r:any = await getUserProfile(uid);
+					const p = r?.data?.getUserProfile;
+					const email = p?.email;
+					if (email) map[uid] = email;
+				} catch {}
+			}
+			if (Object.keys(map).length) setUserIdToEmail(prev => ({ ...prev, ...map }));
+		} catch {}
+	}
+
 	// Debounced lastRead setter
 	const debouncedSetLastRead = useRef(
 		debounce(async (cid: string, uid: string) => {
@@ -91,14 +121,15 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			try {
                 const me = await getCurrentUser();
                 setMyId(me.userId);
-                // Resolve my email from Cognito ID token, fallbacks to username/loginId
+                // Resolve my email from Cognito ID token, fallbacks to username/loginId and cache
                 try {
                     const session: any = await fetchAuthSession();
                     const claims: any = session?.tokens?.idToken?.payload || {};
                     const tokenEmail = (claims?.email || '').trim();
                     let fallbackEmail = '';
                     try { fallbackEmail = (me as any)?.username || (me as any)?.signInDetails?.loginId || ''; } catch {}
-                    const finalEmail = tokenEmail || fallbackEmail;
+                    const cached = getEmailCacheSnapshot()[me.userId];
+                    const finalEmail = tokenEmail || cached || fallbackEmail;
                     if (finalEmail) setMyEmail(finalEmail);
                 } catch {}
                 let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
@@ -108,21 +139,19 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                 try {
                     const partsRes: any = await listParticipantsForConversation(cid, 100);
                     const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+                    try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] list parts', { count: parts.length, ids: parts.map((p:any)=>p?.userId).filter(Boolean) }); } catch {}
                     setParticipantIds(parts.map((p:any)=> p?.userId).filter(Boolean));
                     if (!otherId) {
                         const other = parts.find((p: any) => p?.userId && p.userId !== me.userId);
                         if (other?.userId) otherId = other.userId;
                     }
-                    // Prefetch all participant emails for labeling
+                    // Prefetch all participant emails for labeling (merge with cache)
                     try {
                         const ids = Array.from(new Set(parts.map((p:any)=> p?.userId).filter(Boolean).concat(me.userId)));
-                        const usersMap = await batchGetUsersCached(ids);
-                        const map: Record<string, string> = {};
-                        for (const uid of Object.keys(usersMap)) {
-                            const u = (usersMap as any)[uid];
-                            if (u?.email) map[uid] = u.email;
-                        }
-                        setUserIdToEmail(prev => ({ ...prev, ...map }));
+                        await ensureEmails(ids);
+                        const cachedMap = getEmailCacheSnapshot();
+                        setUserIdToEmail(prev => ({ ...cachedMap, ...prev }));
+                        try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] prefetch emails', { requested: ids.length, resolved: Object.keys(map).length }); } catch {}
                     } catch {}
                     // Load conversation metadata (name, group)
                     try {
@@ -185,9 +214,11 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                         try {
                             const sid = m?.senderId;
                             if (sid && !userIdToEmail[sid]) {
+                                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] live fetch email for', sid); } catch {}
                                 const r: any = await getUserById(sid);
                                 const u = r?.data?.getUser;
                                 if (u?.email) setUserIdToEmail(prev => ({ ...prev, [sid]: u.email }));
+                                try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] live fetched', { sid, hasEmail: !!u?.email }); } catch {}
                             }
                         } catch {}
                         // Calendar CTA (flag-gated) — if metadata missing in sub payload, refetch message once to get metadata
@@ -354,17 +385,13 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					}
 				} catch {}
 				setNextToken(res.nextToken);
-				// Build user email map for labeling bubbles
-				try {
-					const uniqueIds = Array.from(new Set(items.map((m:any) => m.senderId).filter(Boolean)));
-					const usersMap = await batchGetUsersCached(uniqueIds);
-					const map: Record<string, string> = {};
-					for (const uid of Object.keys(usersMap)) {
-						const u = (usersMap as any)[uid];
-						if (u?.email) map[uid] = u.email;
-					}
-					setUserIdToEmail(prev => ({ ...prev, ...(myEmail ? { [me.userId]: myEmail } : {}), ...map }));
-				} catch {}
+                // Build user email map for labeling bubbles (merge with cache)
+                try {
+                    const uniqueIds = Array.from(new Set(items.map((m:any) => m.senderId).filter(Boolean)));
+                    await ensureEmails(uniqueIds);
+                    const cachedMap = getEmailCacheSnapshot();
+                    setUserIdToEmail(prev => ({ ...cachedMap, ...prev, ...(myEmail ? { [me.userId]: myEmail } : {}) }));
+                } catch {}
 				// Decorate with basic status icon based on receipts for 1:1
 				const decorated = await Promise.all(items.map(async (m: any) => {
 					try {
@@ -529,6 +556,23 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					const cidNow = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
 					if (cidNow) {
 						await setMyLastRead(cidNow, me.userId, new Date().toISOString());
+						// Always attempt to fetch the latest page when entering the chat
+						if (!latestRefreshInFlightRef.current) {
+							latestRefreshInFlightRef.current = true;
+							try {
+								const page: any = await listMessagesCompat(cidNow, 25);
+								const newer = page.items || [];
+								setNextToken(page.nextToken);
+								setMessages(prev => {
+									const merged = mergeDedupSort(prev, newer);
+									AsyncStorage.setItem(`history:${cidNow}`, JSON.stringify(merged)).catch(() => {});
+									return merged;
+								});
+								// Ensure emails for any senders in this latest page
+								try { await ensureEmails(newer.map((m:any)=>m.senderId).filter(Boolean)); } catch {}
+							} catch {}
+							finally { latestRefreshInFlightRef.current = false; }
+						}
 					}
 				} catch {}
 			}
@@ -691,11 +735,24 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 					>
 						<Text style={{ color: theme.colors.primary, fontSize: 18 }}>←</Text>
 					</TouchableOpacity>
-					<TouchableOpacity style={{ flex: 1 }} onPress={() => setParticipantsVisible(true)} accessibilityLabel="Chat info">
+					<TouchableOpacity
+						style={{ flex: 1 }}
+						onPress={async () => {
+							try {
+								const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
+								if (ids.length) await ensureEmails(ids);
+							} catch {}
+							setParticipantsVisible(true);
+						}}
+						accessibilityLabel="Chat info"
+					>
 						<View style={{ paddingVertical: 8 }}>
-							<Text style={{ textAlign: 'center', fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>
-								{convName || (isGroup ? 'Group chat' : 'Chat')}
-							</Text>
+							<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+								<Text style={{ textAlign: 'center', fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>
+									{convName || (isGroup ? 'Group chat' : 'Chat')}
+								</Text>
+								<Text style={{ color: theme.colors.textSecondary }}>▾</Text>
+							</View>
 							{(() => { const { ENABLE_CHAT_UX } = getFlags(); const sub = ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined; return sub ? (
 								<Text style={{ textAlign: 'center', color: theme.colors.textSecondary, fontSize: 12 }} numberOfLines={1}>{sub}</Text>
 							) : null; })()}
@@ -740,7 +797,7 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 							}}
 							style={{ paddingRight: 12 }}
 						>
-							<Text style={{ color: '#ef4444', fontWeight: '600' }}>Delete</Text>
+						<Text style={{ color: theme.colors.destructive, fontWeight: '600' }}>Delete</Text>
 						</TouchableOpacity>
 					</View>
 				</SafeAreaView>
@@ -865,11 +922,22 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						<Text style={{ fontWeight: '600', marginBottom: theme.spacing.sm, color: theme.colors.textPrimary }}>Participants</Text>
 						{(() => {
 							const ids = Array.from(new Set([myId, ...participantIds].filter(Boolean)));
-							return ids.map((uid) => (
-								<View key={uid} style={{ paddingVertical: 6 }}>
-									<Text style={{ color: theme.colors.textPrimary }}>{userIdToEmail[uid] || uid}</Text>
-								</View>
-							));
+							return ids.map((uid) => {
+								const email = userIdToEmail[uid];
+								const showSpinner = !email;
+								if (showSpinner) {
+									try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[participants] awaiting email', uid); } catch {}
+								}
+								return (
+									<View key={uid} style={{ paddingVertical: 6, minHeight: 22, flexDirection: 'row', alignItems: 'center' }}>
+										{email ? (
+											<Text style={{ color: theme.colors.textPrimary }}>{email}</Text>
+										) : (
+											<ActivityIndicator size="small" color={theme.colors.muted} />
+										)}
+									</View>
+								);
+							});
 						})()}
 						<View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: theme.spacing.md }}>
 							<Button title="Close" onPress={() => setParticipantsVisible(false)} />

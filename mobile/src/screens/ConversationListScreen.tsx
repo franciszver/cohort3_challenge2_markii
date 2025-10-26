@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { View, Text, Button, FlatList, TouchableOpacity, Modal, TextInput, RefreshControl } from 'react-native';
+import { useFonts, DancingScript_700Bold } from '@expo-google-fonts/dancing-script';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentUser, signOut, fetchAuthSession } from 'aws-amplify/auth';
 import * as Clipboard from 'expo-clipboard';
 import { listConversationsForUser, getConversation, listParticipantsForConversation, listConversationsByParticipant, ensureParticipant, setMyLastRead, createConversation } from '../graphql/conversations';
-import { batchGetUsersCached, getUserById } from '../graphql/users';
+import { batchGetUsersCached, getUserById, seedUserEmailCache } from '../graphql/users';
 import { batchGetProfilesCached } from '../graphql/profile';
 import { getLatestMessageInConversation } from '../graphql/messages';
 import { formatTimestamp } from '../utils/time';
@@ -19,6 +20,7 @@ import { getUserProfile, updateUserProfile, invalidateProfileCache } from '../gr
 import { useTheme } from '../utils/theme';
 
 export default function ConversationListScreen({ route, navigation }: any) {
+  const [titleFontsLoaded] = useFonts({ DancingScript_700Bold });
   const theme = useTheme();
   const [items, setItems] = useState<any[]>([]);
   const [allItems, setAllItems] = useState<any[]>([]);
@@ -113,7 +115,9 @@ export default function ConversationListScreen({ route, navigation }: any) {
       setMyId(me.userId);
       // Header actions and theming
       navigation.setOptions({
-        headerTitleStyle: { fontSize: 20, fontWeight: '600', color: theme.colors.textPrimary },
+        headerTitle: () => (
+          <Text style={{ fontSize: 26, color: theme.colors.textPrimary, fontFamily: titleFontsLoaded ? 'DancingScript_700Bold' : undefined }}>NegotiatedAi</Text>
+        ),
         headerStyle: { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border, borderBottomWidth: 1 },
         headerTitleAlign: 'center',
         headerRight: () => (
@@ -261,7 +265,16 @@ export default function ConversationListScreen({ route, navigation }: any) {
           // fetch participant subset (first 3 for avatars)
           const partsRes: any = await listParticipantsForConversation(c.id, 3);
           const parts = partsRes?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
-          const userMap = await batchGetUsersCached(parts.map((p: any) => p.userId));
+          const userIds = parts.map((p: any) => p.userId);
+          const userMap = await batchGetUsersCached(userIds);
+          try {
+            const snapshot: Record<string, string> = {};
+            for (const uid of Object.keys(userMap || {})) {
+              const u = (userMap as any)[uid];
+              if (u?.email) snapshot[uid] = u.email;
+            }
+            if (Object.keys(snapshot).length) seedUserEmailCache(snapshot);
+          } catch {}
           let profileMap: Record<string, any> | null = null;
           try {
             const { ENABLE_PROFILES } = getFlags();
@@ -289,7 +302,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
       lastLoadedAtRef.current = Date.now();
     } catch (e: any) { setError(e?.message || 'Load failed'); }
     finally { isLoadingRef.current = false; setIsInitialLoading(false); }
-  }, [navigation, theme.colors.border, theme.colors.surface, theme.colors.textPrimary]);
+  }, [navigation, theme.colors.border, theme.colors.surface, theme.colors.textPrimary, titleFontsLoaded]);
 
   useEffect(() => { load(); }, [load]);
   // Show hint when coming from Auth
