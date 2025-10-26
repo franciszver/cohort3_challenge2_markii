@@ -10,6 +10,7 @@ export default function GroupCreateScreen({ navigation }: any) {
   const [participantInput, setParticipantInput] = useState('');
   const [participants, setParticipants] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const hasParticipants = participants.length > 0;
 
   const addParticipant = () => {
@@ -29,18 +30,38 @@ export default function GroupCreateScreen({ navigation }: any) {
   const onCreate = async () => {
     try {
       setError(null);
+      setCreating(true);
       const me = await getCurrentUser();
       const tokens = participants.map(s => s.trim()).filter(Boolean);
       if (tokens.length === 0) {
         setError('Add at least one participant ID');
+        setCreating(false);
         return;
       }
       const dedup = Array.from(new Set(tokens));
       const ids = [me.userId, ...dedup];
       const conv = await createConversation(name || undefined, true, ids);
+      // Wait for participant records to be visible (eventual consistency) before allowing first send
+      try {
+        const { listParticipantsForConversation } = await import('../graphql/conversations');
+        const start = Date.now();
+        let seen = 0;
+        // Poll up to ~3 seconds
+        while (Date.now() - start < 3000) {
+          try {
+            const r: any = await listParticipantsForConversation(conv.id, 100);
+            const items = r?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+            seen = items.length || 0;
+            if (seen >= ids.length) break;
+          } catch {}
+          await new Promise(res => setTimeout(res, 250));
+        }
+      } catch {}
       navigation.replace('Chat', { conversationId: conv.id });
     } catch (e: any) {
       setError(e?.message ?? 'Create failed');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -86,12 +107,12 @@ export default function GroupCreateScreen({ navigation }: any) {
         </View>
         <TouchableOpacity
           onPress={onCreate}
-          disabled={!hasParticipants}
-          style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: !hasParticipants ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
+          disabled={!hasParticipants || creating}
+          style={{ backgroundColor: '#F2EFEA', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, opacity: (!hasParticipants || creating) ? 0.6 : 1, minHeight: 44, justifyContent: 'center' }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel="Create conversation"
         >
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Create</Text>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{creating ? 'Creating Chat…' : 'Create'}</Text>
         </TouchableOpacity>
         {error ? <Text style={{ color: 'red', marginTop: 12, textAlign: 'center' }}>{error}</Text> : null}
       </View>

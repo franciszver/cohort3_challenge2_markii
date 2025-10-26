@@ -30,7 +30,7 @@ const config: ExpoConfig = {
     APPSYNC_ENDPOINT: process.env.APPSYNC_ENDPOINT,
     DEBUG_LOGS: process.env.DEBUG_LOGS ?? 'false',
     ENABLE_INTROSPECTION: process.env.ENABLE_INTROSPECTION ?? 'false',
-    ENABLE_PROFILES: process.env.ENABLE_PROFILES ?? 'true',
+    ENABLE_PROFILES: process.env.ENABLE_PROFILES ?? 'false',
     ENABLE_CONVERSATION_LIST_UX: process.env.ENABLE_CONVERSATION_LIST_UX ?? 'true',
     ENABLE_CHAT_UX: process.env.ENABLE_CHAT_UX ?? 'true',
     ENABLE_UNREAD_BADGE: process.env.ENABLE_UNREAD_BADGE ?? 'true',

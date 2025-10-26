@@ -1,9 +1,10 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Modal, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
 import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser, getMessageById } from '../graphql/messages';
-import { getCurrentUser } from 'aws-amplify/auth';
+import { getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatHeader from '../components/ChatHeader';
 import { useIsFocused } from '@react-navigation/native';
@@ -18,7 +19,7 @@ import { generateLocalId } from '../utils/ids';
 import { getFlags } from '../utils/flags';
 import Constants from 'expo-constants';
 import { getUserProfile } from '../graphql/profile';
-import { getUserById } from '../graphql/users';
+import { getUserById, batchGetUsersCached } from '../graphql/users';
 import Avatar from '../components/Avatar';
 import { useTheme } from '../utils/theme';
 
@@ -29,6 +30,8 @@ function conversationIdFor(a: string, b: string) {
 export default function ChatScreen({ route, navigation }: any) {
 	const theme = useTheme();
 	const [messages, setMessages] = useState<any[]>([]);
+	const [userIdToEmail, setUserIdToEmail] = useState<Record<string, string>>({});
+	const [myEmail, setMyEmail] = useState<string>('');
 	const [input, setInput] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const listRef = useRef<any>(null);
@@ -85,6 +88,16 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			try {
                 const me = await getCurrentUser();
                 setMyId(me.userId);
+                // Resolve my email from Cognito ID token, fallbacks to username/loginId
+                try {
+                    const session: any = await fetchAuthSession();
+                    const claims: any = session?.tokens?.idToken?.payload || {};
+                    const tokenEmail = (claims?.email || '').trim();
+                    let fallbackEmail = '';
+                    try { fallbackEmail = (me as any)?.username || (me as any)?.signInDetails?.loginId || ''; } catch {}
+                    const finalEmail = tokenEmail || fallbackEmail;
+                    if (finalEmail) setMyEmail(finalEmail);
+                } catch {}
                 let cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
 				if (!cid) throw new Error('No conversation target');
                 // Resolve other participant if not provided
@@ -98,6 +111,14 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
                     } catch {}
                 }
                 setOtherUserResolved(otherId);
+                // Prefetch other participant's email for labeling
+                try {
+                    if (otherId) {
+                        const urAny: any = await getUserById(otherId);
+                        const u = urAny?.data?.getUser;
+                        if (u?.email) setUserIdToEmail(prev => ({ ...prev, [otherId]: u.email }));
+                    }
+                } catch {}
                 // Resolve other participant profile (flagged)
                 try {
                     const { ENABLE_PROFILES } = getFlags();
@@ -139,6 +160,15 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 							AsyncStorage.setItem(`history:${cid}`, JSON.stringify(next)).catch(() => {});
 							return next;
 						});
+                        // Update email map for sender on the fly
+                        try {
+                            const sid = m?.senderId;
+                            if (sid && !userIdToEmail[sid]) {
+                                const r: any = await getUserById(sid);
+                                const u = r?.data?.getUser;
+                                if (u?.email) setUserIdToEmail(prev => ({ ...prev, [sid]: u.email }));
+                            }
+                        } catch {}
                         // Calendar CTA (flag-gated) — if metadata missing in sub payload, refetch message once to get metadata
 						try {
 							const { ASSISTANT_CALENDAR_ENABLED } = getFlags();
@@ -274,10 +304,46 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 						}
 					} catch {}
 				}
-				// fetch latest page after subscription is active
-				const res: any = await listMessagesCompat(cid, 25);
-				const items = res.items;
+				// fetch history after subscription is active
+				let pageSize = 50;
+				let res: any = await listMessagesCompat(cid, pageSize);
+				let items = res.items as any[];
+				// Freshness retries: handle eventual consistency right after first message
+				if (!items || items.length === 0) {
+					for (let i = 0; i < 3 && (!items || items.length === 0); i++) {
+						await new Promise(r => setTimeout(r, 300));
+						try { const again: any = await listMessagesCompat(cid, pageSize); items = again.items || []; res = again; } catch {}
+					}
+				}
+				// Backfill all messages since my joinedAt, up to a sane cap
+				try {
+					const { getMyParticipantRecord } = await import('../graphql/conversations');
+					const meNow = await getCurrentUser();
+					const myPart: any = await getMyParticipantRecord(cid, meNow.userId);
+					const joinedAt = myPart?.joinedAt ? new Date(myPart.joinedAt).getTime() : undefined;
+					const cap = 200; // cap total backfill
+					let nextToken = res.nextToken;
+					while (nextToken && items.length < cap && joinedAt) {
+						const more: any = await listMessagesCompat(cid, pageSize, nextToken);
+						const older = (more.items || []) as any[];
+						items = items.concat(older);
+						nextToken = more.nextToken;
+						const oldest = items[items.length - 1];
+						if (oldest && new Date(oldest.createdAt).getTime() <= joinedAt) break;
+					}
+				} catch {}
 				setNextToken(res.nextToken);
+				// Build user email map for labeling bubbles
+				try {
+					const uniqueIds = Array.from(new Set(items.map((m:any) => m.senderId).filter(Boolean)));
+					const usersMap = await batchGetUsersCached(uniqueIds);
+					const map: Record<string, string> = {};
+					for (const uid of Object.keys(usersMap)) {
+						const u = (usersMap as any)[uid];
+						if (u?.email) map[uid] = u.email;
+					}
+					setUserIdToEmail(prev => ({ ...prev, ...(myEmail ? { [me.userId]: myEmail } : {}), ...map }));
+				} catch {}
 				// Decorate with basic status icon based on receipts for 1:1
 				const decorated = await Promise.all(items.map(async (m: any) => {
 					try {
@@ -455,6 +521,19 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 			if (!trimmed) { return; }
 			const me = await getCurrentUser();
 			const cid = providedConversationId || conversationIdFor(me.userId, otherUserId);
+			// Guard: ensure participant records exist before first send
+			try {
+				const { listParticipantsForConversation } = await import('../graphql/conversations');
+				const start = Date.now();
+				while (Date.now() - start < 1500) {
+					try {
+						const r: any = await listParticipantsForConversation(cid, 100);
+						const items = r?.data?.conversationParticipantsByConversationIdAndUserId?.items || [];
+						if (Array.isArray(items) && items.length >= 2) break;
+					} catch {}
+					await new Promise(res => setTimeout(res, 200));
+				}
+			} catch {}
 			const localId = generateLocalId('msg');
             // quiet start
 			const optimistic: any = {
@@ -573,60 +652,77 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 	};
 
 	return (
-		<View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-			<View style={{ flexDirection: 'row', alignItems: 'center' }}>
-				<View style={{ flex: 1 }}>
-					{(() => { const { ENABLE_CHAT_UX } = getFlags(); return (
-						<ChatHeader
-							username={otherUserId}
-							online={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000) : undefined}
-							subtitle={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined}
-							profile={otherProfile ? { userId: otherProfile.userId, firstName: otherProfile.firstName, lastName: otherProfile.lastName, email: otherProfile.email, avatarColor: otherProfile.avatarColor } : undefined}
-						/>
-					); })()}
-				</View>
-				<TouchableOpacity
-					onPress={async () => {
-						try {
-							const me = await getCurrentUser();
-							const cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
-							if (!cid) return;
-							Alert.alert(
-								'Delete conversation?',
-								'This will delete the conversation for all users. This action cannot be undone.',
-								[
-									{ text: 'Cancel', style: 'cancel' },
-									{
-										text: 'Delete', style: 'destructive', onPress: async () => {
-											try {
-												await deleteConversationById(cid);
-												try { await AsyncStorage.removeItem(`history:${cid}`); } catch {}
-												try { subRef.current?.unsubscribe?.(); } catch {}
-												try { typingSubRef.current?.unsubscribe?.(); } catch {}
-												try { receiptsSubRef.current?.unsubscribe?.(); } catch {}
-												// Navigate back to list (for local deleter)
-												try {
-													if (navigation.canGoBack?.()) {
-														navigation.goBack?.();
-													} else {
-														navigation.navigate?.('Conversations');
+			<View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+				<SafeAreaView edges={['top']} style={{ backgroundColor: theme.colors.surface }}>
+				<View style={{ flexDirection: 'row', alignItems: 'center' }}>
+					<TouchableOpacity
+						onPress={() => {
+							try {
+								if (navigation.canGoBack?.()) {
+									navigation.goBack?.();
+								} else {
+									navigation.navigate?.('Conversations');
+								}
+							} catch {}
+						}}
+						style={{ paddingHorizontal: 12, paddingVertical: 8 }}
+						accessibilityLabel="Go back"
+					>
+						<Text style={{ color: theme.colors.primary, fontSize: 18 }}>←</Text>
+					</TouchableOpacity>
+						<View style={{ flex: 1 }}>
+							{(() => { const { ENABLE_CHAT_UX } = getFlags(); return (
+								<ChatHeader
+									username={otherUserId}
+									online={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000) : undefined}
+									subtitle={ENABLE_CHAT_UX && otherLastSeen ? (Date.now() - new Date(otherLastSeen).getTime() < 2*60*1000 ? 'Online' : (formatLastSeen(otherLastSeen) || undefined)) : undefined}
+									profile={otherProfile ? { userId: otherProfile.userId, firstName: otherProfile.firstName, lastName: otherProfile.lastName, email: otherProfile.email, avatarColor: otherProfile.avatarColor } : undefined}
+								/>
+							); })()}
+						</View>
+						<TouchableOpacity
+							onPress={async () => {
+								try {
+									const me = await getCurrentUser();
+									const cid = providedConversationId || (otherUserId ? conversationIdFor(me.userId, otherUserId) : undefined);
+									if (!cid) return;
+									Alert.alert(
+										'Delete conversation?',
+										'This will delete the conversation for all users. This action cannot be undone.',
+										[
+											{ text: 'Cancel', style: 'cancel' },
+											{
+												text: 'Delete', style: 'destructive', onPress: async () => {
+													try {
+														await deleteConversationById(cid);
+														try { await AsyncStorage.removeItem(`history:${cid}`); } catch {}
+														try { subRef.current?.unsubscribe?.(); } catch {}
+														try { typingSubRef.current?.unsubscribe?.(); } catch {}
+														try { receiptsSubRef.current?.unsubscribe?.(); } catch {}
+														// Navigate back to list (for local deleter)
+														try {
+															if (navigation.canGoBack?.()) {
+																navigation.goBack?.();
+															} else {
+																navigation.navigate?.('Conversations');
+															}
+														} catch {}
+														try { showToast('Conversation deleted'); } catch {}
+													} catch (e) {
+														setError((e as any)?.message || 'Delete failed');
 													}
-												} catch {}
-												try { showToast('Conversation deleted'); } catch {}
-											} catch (e) {
-												setError((e as any)?.message || 'Delete failed');
+												}
 											}
-										}
-									}
-								]
-							);
-						} catch {}
-					}}
-					style={{ paddingRight: 12 }}
-				>
-					<Text style={{ color: '#ef4444', fontWeight: '600' }}>Delete</Text>
-				</TouchableOpacity>
-			</View>
+										]
+									);
+								} catch {}
+							}}
+							style={{ paddingRight: 12 }}
+						>
+							<Text style={{ color: '#ef4444', fontWeight: '600' }}>Delete</Text>
+						</TouchableOpacity>
+					</View>
+				</SafeAreaView>
             {isTyping ? <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>typing…</Text> : null}
             {(() => { try { const { ASSISTANT_ENABLED } = getFlags(); return ASSISTANT_ENABLED; } catch { return false; } })() && (providedConversationId || '').startsWith('assistant::') && assistantPending ? (
                 <Text style={{ paddingHorizontal: 12, color: '#6b7280' }}>Assistant is thinking…</Text>
@@ -704,33 +800,30 @@ const [decisionsItems, setDecisionsItems] = useState<any[]>([]);
 									setInfoVisible(true);
 								}
 								}}>
-								<View style={[{ maxWidth: '88%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }, item.senderId !== myId ? { marginLeft: 'auto' } : null ]}>
-										<Text style={{ color: theme.colors.textPrimary }}>
-											{(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? '' : `${item.senderId === myId ? 'Me' : item.senderId}: `}
-											{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
-											{item.__status ? ' ' : ''}
-											{item.__status === 'sent' ? '✓' : null}
-											{item.__status === 'delivered' ? <Text style={{ color: theme.colors.textSecondary }}>✓✓</Text> : null}
-											{item.__status === 'read' ? <Text style={{ color: theme.colors.primary }}>✓✓</Text> : null}
-										</Text>
-										<Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
-											{formatTimestamp(item.createdAt)}{item.editedAt ? ' · edited' : ''}
-										</Text>
-									</View>
+                                <View style={[{ maxWidth: '88%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4 }, item.senderId !== myId ? { marginLeft: 'auto' } : null ]}>
+								<Text style={{ color: theme.colors.textPrimary }}>
+									{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
+									{item.__status ? ' ' : ''}
+									{item.__status === 'sent' ? '✓' : null}
+									{item.__status === 'delivered' ? <Text style={{ color: theme.colors.textSecondary }}>✓✓</Text> : null}
+									{item.__status === 'read' ? <Text style={{ color: theme.colors.primary }}>✓✓</Text> : null}
+								</Text>
+                                            {(() => {
+                                                const email = item.senderId === myId
+                                                    ? (myEmail || userIdToEmail[myId] || '')
+                                                    : (userIdToEmail[item.senderId] || '');
+                                                const edited = item.editedAt ? ' · edited' : '';
+                                                const suffix = email ? ` · ${email}` : '';
+                                                return (
+                                                    <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }} numberOfLines={1}>
+                                                        {formatTimestamp(item.createdAt)}{edited}{suffix}
+                                                    </Text>
+                                                );
+                                            })()}
+							</View>
 								</TouchableOpacity>
 							)}
-						{(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() && item.senderId !== myId ? (
-							<View style={{ marginLeft: 8 }}>
-								<Avatar
-									userId={item.senderId}
-									firstName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.firstName : undefined}
-									lastName={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.lastName : undefined}
-									email={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.email : undefined}
-									color={item.senderId === (otherUserResolved || otherUserId) ? otherProfile?.avatarColor : undefined}
-									size={24}
-								/>
-							</View>
-						) : null}
+					{/* Avatars disabled per requirements */}
 						</View>
 				)}
 			/>

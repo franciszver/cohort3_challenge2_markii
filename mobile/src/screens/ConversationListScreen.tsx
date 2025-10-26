@@ -224,6 +224,8 @@ export default function ConversationListScreen({ route, navigation }: any) {
               setTimeout(() => {
                 setBanner(curr => (curr && curr.conversationId === id ? null : curr));
               }, 4000);
+              // Force refresh latest page for the target conversation in list to avoid stale cache
+              try { await load(true); } catch {}
             },
             error: () => {},
           });
@@ -590,17 +592,39 @@ export default function ConversationListScreen({ route, navigation }: any) {
       {/* Hamburger menu modal */}
       <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
         <TouchableOpacity activeOpacity={1} onPress={() => setShowMenu(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.1)' }}>
-          <View style={{ position: 'absolute', top: 56, right: 12, backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, padding: 8, minWidth: 180, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8 }}>
-            <TouchableOpacity onPress={() => { setShowMenu(false); setShowId(true); }} style={{ paddingVertical: 8, paddingHorizontal: 8 }}>
-              <Text style={{ color: theme.colors.textPrimary }}>My ID</Text>
+          <View style={{ position: 'absolute', top: 56, right: 12, backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 12, padding: 8, minWidth: 220, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } }}>
+            <TouchableOpacity accessibilityRole="button" onPress={() => { setShowMenu(false); setShowId(true); }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F2EFEA', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 12 }}>ID</Text>
+              </View>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>My ID</Text>
             </TouchableOpacity>
             {(() => { try { const { ENABLE_PROFILES } = getFlags(); return ENABLE_PROFILES; } catch { return false; } })() ? (
-              <TouchableOpacity onPress={() => { setShowMenu(false); openProfile(); }} style={{ paddingVertical: 8, paddingHorizontal: 8 }}>
-                <Text style={{ color: theme.colors.textPrimary }}>Profile</Text>
-              </TouchableOpacity>
+              <>
+                <View style={{ height: 1, backgroundColor: theme.colors.border, marginVertical: 4 }} />
+                <TouchableOpacity accessibilityRole="button" onPress={() => { setShowMenu(false); openProfile(); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F2EFEA', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 12 }}>👤</Text>
+                  </View>
+                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Profile</Text>
+                </TouchableOpacity>
+              </>
             ) : null}
-            <TouchableOpacity onPress={async () => { setShowMenu(false); try { await signOut(); } catch {} navigation.replace('Auth'); }} style={{ paddingVertical: 8, paddingHorizontal: 8 }}>
-              <Text style={{ color: theme.colors.textPrimary }}>Sign Out</Text>
+            <View style={{ height: 1, backgroundColor: theme.colors.border, marginVertical: 4 }} />
+            <TouchableOpacity accessibilityRole="button" onPress={async () => { setShowMenu(false); try { await signOut(); } catch {} navigation.replace('Auth'); }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F2EFEA', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 12 }}>⎋</Text>
+              </View>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sign Out</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>

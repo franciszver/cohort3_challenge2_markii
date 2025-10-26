@@ -27,9 +27,9 @@ const Light: Theme = {
     textSecondary: '#4A4A4A',
     // Accent resembling pencil graphite highlight
     primary: '#4B5563',
-    // Message bubbles akin to light graphite on paper
-    bubbleMe: '#F2EFEA',
-    bubbleOther: '#FFFFFF',
+    // Message bubbles with stronger differentiation
+    bubbleMe: '#E6F4EA',
+    bubbleOther: '#E7F0FF',
     // Border like faint pencil line
     border: '#E5E1DA',
   },

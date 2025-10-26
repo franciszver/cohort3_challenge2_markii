@@ -24,12 +24,7 @@ export default function ChatHeader({ username, avatar, online, subtitle, profile
           <Avatar userId={profile.userId} firstName={profile.firstName} lastName={profile.lastName} email={profile.email} color={profile.avatarColor || undefined} size={32} onPress={() => setShowProfile(true)} />
           <View style={[styles.presenceDot, { backgroundColor: online ? '#22c55e' : '#9ca3af' }]} />
         </View>
-      ) : (
-        <View style={{ position: 'relative' }}>
-          {avatar ? <Image source={{ uri: avatar }} style={styles.avatar} /> : <View style={styles.placeholder} />}
-          <View style={[styles.presenceDot, { backgroundColor: online ? '#22c55e' : '#9ca3af' }]} />
-        </View>
-      )}
+      ) : null}
       <View>
         <Text style={styles.username}>{(() => {
           if (ENABLE_PROFILES && profile) {
