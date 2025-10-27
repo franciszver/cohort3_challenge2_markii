@@ -57,6 +57,7 @@ const config: ExpoConfig = {
     ASSISTANT_DEADLINES_ENABLED: process.env.ASSISTANT_DEADLINES_ENABLED ?? 'false',
     ASSISTANT_CONFLICTS_ENABLED: process.env.ASSISTANT_CONFLICTS_ENABLED ?? 'false',
     ASSISTANT_GROUP_ENABLED: process.env.ASSISTANT_GROUP_ENABLED ?? 'false',
+    ASSISTANT_RECIPE_ENABLED: process.env.ASSISTANT_RECIPE_ENABLED ?? 'false',
   },
 };
 
