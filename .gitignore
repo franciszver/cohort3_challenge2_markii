@@ -11,6 +11,13 @@ openaitest.ps1
 payload.json
 out.json
 
+# AWS configuration files with API IDs and endpoints
+appsync_update.json
+appsync_additional_auth.json
+attr.json
+gsi.json
+trust.json
+
 **/amplify/**
 
 # Node/Expo

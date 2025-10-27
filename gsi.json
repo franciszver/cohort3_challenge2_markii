@@ -1,1 +1,0 @@
-[{"Create":{"IndexName":"emailLowerGSI","KeySchema":[{"AttributeName":"emailLower","KeyType":"HASH"}],"Projection":{"ProjectionType":"KEYS_ONLY"}}}]
