@@ -253,6 +253,27 @@ export function subscribeReceiptsForUser(userId: string) {
   return op.subscribe.bind(op);
 }
 
+export function subscribeMessageUpdates(conversationId: string) {
+  const subscription = /* GraphQL */ `
+    subscription OnUpdateMessage($filter: ModelSubscriptionMessageFilterInput) {
+      onUpdateMessage(filter: $filter) {
+        id
+        conversationId
+        content
+        attachments
+        messageType
+        senderId
+        metadata
+        createdAt
+        updatedAt
+      }
+    }
+  `;
+  const variables = { filter: { conversationId: { eq: conversationId } } } as const;
+  const op = getClient().graphql({ query: subscription, variables, authMode: 'userPool' }) as any;
+  return op.subscribe.bind(op);
+}
+
 export async function getReceiptForMessageUser(messageId: string, userId: string) {
   const query = /* GraphQL */ `
     query Receipt($messageId: String!, $userId: ModelStringKeyConditionInput, $limit: Int) {

@@ -6,17 +6,7 @@
 const crypto = require('crypto');
 const https = require('https');
 
-// AWS SDK v3 for direct DynamoDB access
-let DynamoDBClient, GetItemCommand;
-try {
-  const dynamo = require('@aws-sdk/client-dynamodb');
-  DynamoDBClient = dynamo.DynamoDBClient;
-  GetItemCommand = dynamo.GetItemCommand;
-} catch (e) {
-  console.warn('[assistant] AWS SDK v3 not available:', e.message);
-}
-
-const { APPSYNC_ENDPOINT, AWS_REGION = 'us-east-1', ASSISTANT_BOT_USER_ID = 'assistant-bot', ASSISTANT_REPLY_PREFIX = 'Assistant Echo:', DYNAMODB_MESSAGE_TABLE } = process.env;
+const { APPSYNC_ENDPOINT, AWS_REGION = 'us-east-1', ASSISTANT_BOT_USER_ID = 'assistant-bot', ASSISTANT_REPLY_PREFIX = 'Assistant Echo:' } = process.env;
 const CODE_VERSION = 'decisions-debug-v3';
 
 if (!APPSYNC_ENDPOINT) {
@@ -752,94 +742,6 @@ exports.handler = async (event) => {
     } else {
       body = event || {};
     }
-    // Handle metadata fetch via POST (simpler than GET routing)
-    if (body?.fetchMetadata && body?.messageId) {
-      const messageId = body.messageId;
-      console.log('[metadata] Fetching metadata via POST for:', messageId);
-      
-      try {
-        // Query DynamoDB directly to bypass AppSync permissions
-        if (!DynamoDBClient || !GetItemCommand) {
-          console.error('[metadata] DynamoDB SDK not available');
-          return respond(isHttp, 500, { error: 'DynamoDB SDK unavailable', metadata: null });
-        }
-        
-        // Try to determine table name from AppSync endpoint or use env variable
-        let tableName = DYNAMODB_MESSAGE_TABLE;
-        let tablePatterns = [];
-        
-        if (!tableName && APPSYNC_ENDPOINT) {
-          const match = APPSYNC_ENDPOINT.match(/\/\/([a-z0-9]+)\.appsync/);
-          const apiId = match ? match[1] : null;
-          if (apiId) {
-            // Try multiple common patterns
-            tablePatterns = [
-              'MessageV2', // Most likely AppSync table with id as primary key
-              `Message-${apiId}-prod`,
-              `Message-${apiId}-dev`,
-              `Message-${apiId}-devmarkii`,
-              'Messages'
-            ];
-            console.log('[metadata] Will try table patterns:', tablePatterns.slice(0, 3).join(', ') + '...');
-          }
-        }
-        
-        if (!tableName && tablePatterns.length === 0) {
-          console.error('[metadata] No table name configured');
-          return respond(isHttp, 500, { error: 'No table name configured', metadata: null });
-        }
-        
-        const client = new DynamoDBClient({ region: AWS_REGION });
-        let result = null;
-        let lastError = null;
-        
-        // Try configured table name first
-        const namesToTry = tableName ? [tableName, ...tablePatterns] : tablePatterns;
-        
-        for (const name of namesToTry) {
-          try {
-            const command = new GetItemCommand({
-              TableName: name,
-              Key: { id: { S: messageId } },
-              ProjectionExpression: 'id, metadata'
-            });
-            
-            console.log('[metadata] Trying table:', name);
-            result = await client.send(command);
-            tableName = name; // Remember which one worked
-            console.log('[metadata] ✅ Found table:', name);
-            break;
-          } catch (e) {
-            lastError = e;
-            if (e.message?.includes('Requested resource not found')) {
-              console.log('[metadata] Table not found:', name);
-              continue; // Try next pattern
-            } else {
-              // Other error (permissions, etc) - don't continue
-              throw e;
-            }
-          }
-        }
-        
-        if (!result) {
-          console.error('[metadata] No table worked. Last error:', lastError?.message || lastError);
-          return respond(isHttp, 500, { error: 'Table not found', metadata: null });
-        }
-        
-        if (!result.Item) {
-          console.warn('[metadata] Message not found in DynamoDB:', messageId);
-          return respond(isHttp, 404, { error: 'Message not found', metadata: null });
-        }
-        
-        const metadata = result.Item.metadata?.S || null;
-        console.log('[metadata] ✅ Successfully fetched from DynamoDB, hasMetadata:', !!metadata);
-        return respond(isHttp, 200, { metadata });
-      } catch (e) {
-        console.error('[metadata] Failed to fetch from DynamoDB:', e?.message || e);
-        return respond(isHttp, 500, { error: 'Failed to fetch metadata', metadata: null });
-      }
-    }
-    
     const { requestId, conversationId, userId, text, jwt, tz, calendarEvents } = body || {};
     console.log('[assistant] payload:', { requestId, conversationId, userId, textLen: (text||'').length, hasJwt: !!jwt, tz, calendarEventsCount: Array.isArray(calendarEvents) ? calendarEvents.length : 0 });
 
@@ -1587,22 +1489,6 @@ exports.handler = async (event) => {
                     await signAndRequest({ query: u, variables: { input }, opName: 'updateMessage(metadata)', jwt });
                   }
                 } catch {}
-                // ALSO write metadata directly to DynamoDB (bypass AppSync)
-                try {
-                  if (posted?.id && metadata && Object.keys(metadata).length && DynamoDBClient) {
-                    const { UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
-                    const tableName = DYNAMODB_MESSAGE_TABLE || 'MessageV2';
-                    const client = new DynamoDBClient({ region: AWS_REGION });
-                    const command = new UpdateItemCommand({
-                      TableName: tableName,
-                      Key: { id: { S: posted.id } },
-                      UpdateExpression: 'SET metadata = :metadata',
-                      ExpressionAttributeValues: { ':metadata': { S: JSON.stringify(metadata) } }
-                    });
-                    await client.send(command);
-                    console.log('[metadata] ✅ Wrote directly to DynamoDB:', tableName);
-                  }
-                } catch (e) { console.warn('[metadata] Failed to write to DynamoDB:', e?.message || e); }
               } catch (e) { console.warn('[assistant] openai post failed:', e?.message || e); }
               return respond(isHttp, 200, { ok: true });
             }
@@ -1731,22 +1617,6 @@ exports.handler = async (event) => {
           await signAndRequest({ query: u, variables: { input }, opName: 'updateMessage(metadata)', jwt });
         }
       } catch {}
-      // ALSO write metadata directly to DynamoDB (bypass AppSync)
-      try {
-        if (posted?.id && metadata && Object.keys(metadata).length && DynamoDBClient) {
-          const { UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
-          const tableName = DYNAMODB_MESSAGE_TABLE || 'MessageV2';
-          const client = new DynamoDBClient({ region: AWS_REGION });
-          const command = new UpdateItemCommand({
-            TableName: tableName,
-            Key: { id: { S: posted.id } },
-            UpdateExpression: 'SET metadata = :metadata',
-            ExpressionAttributeValues: { ':metadata': { S: JSON.stringify(metadata) } }
-          });
-          await client.send(command);
-          console.log('[metadata] ✅ Wrote directly to DynamoDB (fallback):', tableName);
-        }
-      } catch (e) { console.warn('[metadata] Failed to write to DynamoDB (fallback):', e?.message || e); }
     } catch (e) {
       console.warn('[assistant] createMessage failed:', e?.message || e);
     }

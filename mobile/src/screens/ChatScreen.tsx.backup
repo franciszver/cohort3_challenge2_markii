@@ -367,50 +367,13 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
                         } catch {}
                         try { if (m?.senderId === 'assistant-bot') setAssistantPending(false); } catch {}
                         
-                        // Metadata handling: fetch from Lambda endpoint (bypasses AppSync permissions)
-                        if (m?.senderId === 'assistant-bot' && (!m.metadata || m.metadata === 'null')) {
-                            const msgId = m.id;
-                            console.log('[metadata] Scheduling fetch for', msgId.slice(0, 8), 'in 1.5s');
-                            setTimeout(async () => {
-                                try {
-                                    const { getFlags } = await import('../utils/flags');
-                                    const { ASSISTANT_ENDPOINT } = getFlags();
-                                    const endpoint = String(ASSISTANT_ENDPOINT || '').replace(/\/$/, '');
-                                    if (!endpoint) {
-                                        console.warn('[metadata] No ASSISTANT_ENDPOINT configured');
-                                        return;
-                                    }
-                                    
-                                    const url = `${endpoint}/agent/weekend-plan`;
-                                    console.log('[metadata] Fetching via POST for:', msgId.slice(0, 8));
-                                    const response = await fetch(url, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            fetchMetadata: true,
-                                            messageId: msgId,
-                                            userId: m.conversationId.split('::')[1]
-                                        })
-                                    });
-                                    
-                                    if (!response.ok) {
-                                        console.warn('[metadata] Fetch failed:', response.status, response.statusText);
-                                        return;
-                                    }
-                                    
-                                    const data = await response.json();
-                                    console.log('[metadata] Response:', { hasMetadata: !!data?.metadata, metadata: data?.metadata ? String(data.metadata).slice(0, 100) : null });
-                                    
-                                    if (data?.metadata && data.metadata !== 'null') {
-                                        console.log('[metadata] ✅ Fetched successfully for', msgId.slice(0, 8));
-                                        setMessages(prev => mergeDedupSort(prev, [{ ...m, metadata: data.metadata }]));
-                                    } else {
-                                        console.warn('[metadata] ⚠️ No metadata in response');
-                                    }
-                                } catch (e) {
-                                    console.warn('[metadata] ❌ Failed to fetch:', e);
-                                }
-                            }, 1500); // Wait 1.5s for Lambda to finish + DynamoDB replication
+                        // Metadata handling: subscription fires again when Lambda updates metadata
+                        if (m?.senderId === 'assistant-bot') {
+                            if (m.metadata && m.metadata !== 'null') {
+                                console.log('[metadata] ✅ Received metadata via subscription for', m.id.slice(0, 8));
+                            } else {
+                                console.log('[metadata] ⏳ Waiting for metadata update via subscription for', m.id.slice(0, 8));
+                            }
                         }
                         
 						try { await markDelivered(m.id, me.userId); } catch {}
