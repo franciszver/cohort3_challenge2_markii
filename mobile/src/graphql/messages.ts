@@ -66,7 +66,21 @@ export async function listMessagesByConversation(
     variables: { conversationId, limit, nextToken, sortDirection: 'DESC' },
     authMode: 'userPool',
   });
-  try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[messages:rootQuery]', { conversationId, limit, got: (res as any)?.data?.messagesByConversationIdAndCreatedAt?.items?.length || 0 }); } catch {}
+  try { 
+    const { getFlags } = await import('../utils/flags'); 
+    const { DEBUG_LOGS } = getFlags(); 
+    if (DEBUG_LOGS) {
+      const items = (res as any)?.data?.messagesByConversationIdAndCreatedAt?.items || [];
+      const errors = (res as any)?.errors;
+      console.log('[messages:rootQuery]', { 
+        conversationId, 
+        limit, 
+        got: items.length,
+        hasErrors: !!errors,
+        errors: errors ? JSON.stringify(errors) : undefined 
+      });
+    }
+  } catch {}
   return res;
 }
 
@@ -333,7 +347,20 @@ async function syncMessagesByFilter(
     variables: { conversationId, limit, nextToken },
     authMode: 'userPool',
   });
-  try { const { getFlags } = await import('../utils/flags'); const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[messages:syncFallback]', { conversationId, got: (res as any)?.data?.syncMessages?.items?.length || 0 }); } catch {}
+  try { 
+    const { getFlags } = await import('../utils/flags'); 
+    const { DEBUG_LOGS } = getFlags(); 
+    if (DEBUG_LOGS) {
+      const items = (res as any)?.data?.syncMessages?.items || [];
+      const errors = (res as any)?.errors;
+      console.log('[messages:syncFallback]', { 
+        conversationId, 
+        got: items.length,
+        hasErrors: !!errors,
+        errors: errors ? JSON.stringify(errors) : undefined 
+      });
+    }
+  } catch {}
   return res;
 }
 

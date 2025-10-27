@@ -112,18 +112,33 @@ export default function ConversationListScreen({ route, navigation }: any) {
       if (!force && now - lastLoadedAtRef.current < 1500) return; // staleness guard
       isLoadingRef.current = true;
       
+      // Get current user first to check cache validity
+      const me = await getCurrentUser();
+      setMyId(me.userId);
+      
       // Load cached conversations first for instant display (Stale-While-Revalidate)
       const { ENABLE_CONVERSATION_LIST_CACHE, DEBUG_LOGS } = getFlags();
       if (ENABLE_CONVERSATION_LIST_CACHE && !force) {
         try {
-          const cached = await AsyncStorage.getItem('conversationListCache');
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setItems(parsed);
-              setAllItems(parsed);
-              setIsInitialLoading(false);
-              if (DEBUG_LOGS) console.log('[cache] Loaded', parsed.length, 'cached conversations');
+          // Check if cache belongs to current user
+          const cachedUserId = await AsyncStorage.getItem('conversationListCacheUserId');
+          if (cachedUserId && cachedUserId !== me.userId) {
+            // Different user logged in - clear the cache
+            if (DEBUG_LOGS) console.log('[cache] Different user detected, clearing cache');
+            await AsyncStorage.removeItem('conversationListCache');
+            await AsyncStorage.removeItem('conversationListCacheTime');
+            await AsyncStorage.removeItem('conversationListCacheUserId');
+          } else {
+            // Same user - load cache
+            const cached = await AsyncStorage.getItem('conversationListCache');
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setItems(parsed);
+                setAllItems(parsed);
+                setIsInitialLoading(false);
+                if (DEBUG_LOGS) console.log('[cache] Loaded', parsed.length, 'cached conversations');
+              }
             }
           }
         } catch (e) {
@@ -140,8 +155,6 @@ export default function ConversationListScreen({ route, navigation }: any) {
       } catch (e) {
         console.warn('[list] Failed to load nicknames:', e);
       }
-      const me = await getCurrentUser();
-      setMyId(me.userId);
       // Header actions and theming
       navigation.setOptions({
         headerTitle: () => (
@@ -282,7 +295,12 @@ export default function ConversationListScreen({ route, navigation }: any) {
           // Ensure my participant record exists (self-heal missing participant rows)
           try { await ensureParticipant(c.id, me.userId, 'MEMBER'); } catch {}
           // latest message preview
-          const latest = await getLatestMessageInConversation(c.id);
+          let latest = null;
+          try {
+            latest = await getLatestMessageInConversation(c.id);
+          } catch (e) {
+            console.warn('[list] Failed to get latest message for', c.id.slice(0, 20), ':', (e as any)?.message || e);
+          }
           // Override with local cache if it has a newer message (V2 writes)
           let latestLocal: any = null;
           try {
@@ -327,6 +345,7 @@ export default function ConversationListScreen({ route, navigation }: any) {
         try {
           await AsyncStorage.setItem('conversationListCache', JSON.stringify(convs));
           await AsyncStorage.setItem('conversationListCacheTime', new Date().toISOString());
+          await AsyncStorage.setItem('conversationListCacheUserId', me.userId);
           if (DEBUG_LOGS) console.log('[cache] Saved', convs.length, 'conversations');
         } catch (e) {
           if (DEBUG_LOGS) console.warn('[cache] Save failed:', e);
@@ -484,11 +503,11 @@ export default function ConversationListScreen({ route, navigation }: any) {
                   const r: any = await getConversation(cid);
                   const exists = !!r?.data?.getConversation?.id;
                   if (!exists) {
-                    try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
+                    try { await createConversation('Assistant', false, [me.userId, 'assistant-bot'], cid); } catch {}
                     try { await load(true); } catch {}
                   }
                 } catch {
-                  try { await createConversation('Assistant', false, [me.userId], cid); } catch {}
+                  try { await createConversation('Assistant', false, [me.userId, 'assistant-bot'], cid); } catch {}
                 }
                 navigation.navigate('Chat', { conversationId: cid });
               } catch {}
@@ -642,7 +661,17 @@ export default function ConversationListScreen({ route, navigation }: any) {
               </>
             ) : null}
             <View style={{ height: 1, backgroundColor: theme.colors.border, marginVertical: 4 }} />
-            <TouchableOpacity accessibilityRole="button" onPress={async () => { setShowMenu(false); try { await signOut(); } catch {} navigation.replace('Auth'); }}
+            <TouchableOpacity accessibilityRole="button" onPress={async () => { 
+              setShowMenu(false); 
+              try { 
+                // Clear cache on sign out for security
+                await AsyncStorage.removeItem('conversationListCache');
+                await AsyncStorage.removeItem('conversationListCacheTime');
+                await AsyncStorage.removeItem('conversationListCacheUserId');
+                await signOut(); 
+              } catch {} 
+              navigation.replace('Auth'); 
+            }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, minHeight: 44 }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >

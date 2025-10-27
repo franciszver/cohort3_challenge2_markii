@@ -3,7 +3,7 @@ import { View, FlatList, TextInput, Button, Text, Image, TouchableOpacity, Touch
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Calendar from 'expo-calendar';
 import { formatTimestamp, formatLastSeen } from '../utils/time';
-import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser, getMessageById } from '../graphql/messages';
+import { listMessagesCompat, sendTextMessageCompat, subscribeMessagesCompat, markDelivered, markRead, sendTyping, subscribeTyping, getReceiptForMessageUser } from '../graphql/messages';
 import { getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
@@ -238,9 +238,22 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
                 setOtherUserResolved(otherId);
                 // Ensure I am a participant in this conversation to satisfy auth rules for message reads
                 try {
-                    const { ensureParticipant } = await import('../graphql/conversations');
+                    const { ensureParticipant, listParticipantsForConversation } = await import('../graphql/conversations');
                     await ensureParticipant(cid, me.userId, 'MEMBER');
                     try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:participant] ensured', me.userId, 'in', cid); } catch {}
+                    // Also ensure bot is participant for assistant conversations
+                    if (cid.startsWith('assistant::')) {
+                        await ensureParticipant(cid, 'assistant-bot', 'MEMBER');
+                        try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:participant] ensured assistant-bot in', cid); } catch {}
+                        // Verify participants for debugging
+                        try {
+                            const { DEBUG_LOGS } = getFlags();
+                            if (DEBUG_LOGS) {
+                                const parts = await listParticipantsForConversation(cid);
+                                console.log('[chat:participant] verified participants:', parts.map((p: any) => p.userId));
+                            }
+                        } catch {}
+                    }
                 } catch { try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[chat:participant] ensure failed (non-fatal)'); } catch {} }
                 // Prefetch other participant's email for labeling
                 // Removed: relying on metadata only
@@ -285,21 +298,7 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
 							if (ASSISTANT_CALENDAR_ENABLED && m?.senderId === 'assistant-bot') {
 								// Best-effort parse of metadata
                                 let meta = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
-                                if (!meta?.events) {
-                                    // Retry a few times to let backend update metadata
-                                    for (let i = 0; i < 5 && !(meta?.events && meta.events.length); i++) {
-                                        try {
-                                            const full = await getMessageById(m.id);
-                                            meta = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
-                                            try { const { DEBUG_LOGS } = getFlags(); if (DEBUG_LOGS) console.log('[meta] attempt', i+1, 'events=', Array.isArray(meta?.events) ? meta.events.length : 0); } catch {}
-                                        } catch {}
-                                        if (!(meta?.events && meta.events.length)) {
-                                            const delay = 250 + i*300; // ~250,550,850,1150,1450ms
-                                            await new Promise(r => setTimeout(r, delay));
-                                        }
-                                    }
-                                }
-                                // Final fallback: check attachments for embedded events payload (events:<json> or events:<base64>)
+                                // Check attachments for embedded events payload (events:<json> or events:<base64>)
                                 if (!(meta?.events && meta.events.length) && Array.isArray((m as any).attachments)) {
                                     try {
                                         const hit = (m as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('events:'));
@@ -337,22 +336,7 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
                             if (ASSISTANT_DECISIONS_ENABLED && m?.senderId === 'assistant-bot') {
                                 let metaAny = (() => { try { return typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {}); } catch { return {}; } })();
                                 let decs: any[] = Array.isArray((metaAny as any)?.decisions) ? (metaAny as any).decisions : [];
-                                if (!decs.length) {
-                                    // Retry fetch to allow backend metadata updates
-                                    for (let i = 0; i < 5 && !(decs && decs.length); i++) {
-                                        try {
-                                            const full = await getMessageById(m.id);
-                                            const meta2 = (() => { try { return typeof full?.metadata === 'string' ? JSON.parse(full.metadata) : (full?.metadata || {}); } catch { return {}; } })();
-                                            if (Array.isArray((meta2 as any)?.decisions) && (meta2 as any).decisions.length) {
-                                                metaAny = meta2;
-                                                decs = (meta2 as any).decisions;
-                                                break;
-                                            }
-                                        } catch {}
-                                        const delay = 250 + i*300;
-                                        await new Promise(r => setTimeout(r, delay));
-                                    }
-                                }
+                                // Check attachments for embedded decisions
                                 if (!(decs && decs.length) && Array.isArray((m as any).attachments)) {
                                     try {
                                         const hit = (m as any).attachments.find((a:any)=> typeof a === 'string' && a.startsWith('decisions:'));
@@ -381,6 +365,16 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
                             }
                         } catch {}
                         try { if (m?.senderId === 'assistant-bot') setAssistantPending(false); } catch {}
+                        
+                        // Metadata handling: subscription fires again when Lambda updates metadata
+                        if (m?.senderId === 'assistant-bot') {
+                            if (m.metadata && m.metadata !== 'null') {
+                                console.log('[metadata] ✅ Received metadata via subscription for', m.id.slice(0, 8));
+                            } else {
+                                console.log('[metadata] ⏳ Waiting for metadata update via subscription for', m.id.slice(0, 8));
+                            }
+                        }
+                        
 						try { await markDelivered(m.id, me.userId); } catch {}
 						if (m.senderId !== me.userId) {
 							try { await markRead(m.id, me.userId); } catch {}
@@ -1142,13 +1136,30 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
 								}
 								}} style={{ width: '100%' }}>
                                 <View style={[{ maxWidth: '95%', backgroundColor: item.senderId === myId ? theme.colors.bubbleMe : theme.colors.bubbleOther, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 10, marginVertical: 4, alignSelf: item.senderId === myId ? 'flex-end' : 'flex-start' }]}>
-								<Text style={{ color: theme.colors.textPrimary }}>
-									{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
-									{item.__status ? ' ' : ''}
-									{item.__status === 'sent' ? '✓' : null}
-									{item.__status === 'delivered' ? <Text style={{ color: theme.colors.textSecondary }}>✓✓</Text> : null}
-									{item.__status === 'read' ? <Text style={{ color: theme.colors.primary }}>✓✓</Text> : null}
-								</Text>
+								<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+									<Text style={{ color: theme.colors.textPrimary, flexShrink: 1 }}>
+										{item.content} {item._localStatus ? `(${item._localStatus})` : ''}
+										{item.__status ? ' ' : ''}
+										{item.__status === 'sent' ? '✓' : null}
+										{item.__status === 'delivered' ? <Text style={{ color: theme.colors.textSecondary }}>✓✓</Text> : null}
+										{item.__status === 'read' ? <Text style={{ color: theme.colors.primary }}>✓✓</Text> : null}
+									</Text>
+									{(() => {
+										const { ASSISTANT_PRIORITY_ENABLED } = getFlags();
+										if (!ASSISTANT_PRIORITY_ENABLED) return null;
+										try {
+											const metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+											if (metadata?.priority === 'high') {
+												return (
+													<View style={{ backgroundColor: '#ff4444', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}>
+														<Text style={{ color: '#ffffff', fontSize: 16, fontWeight: 'bold' }}>!</Text>
+													</View>
+												);
+											}
+										} catch {}
+										return null;
+									})()}
+								</View>
                                             {(() => {
                                                 const isMe = item.senderId === myId;
                                                 const displayName = isMe ? 'you' : (nicknames[item.senderId] || item.senderId);

@@ -106,7 +106,45 @@ async function getRecentMessages(conversationId, limit = 10, jwt) {
   return res?.data?.messagesByConversationIdAndCreatedAt?.items || [];
 }
 
+async function ensureAssistantParticipant(conversationId, jwt) {
+  try {
+    // Check if assistant-bot is already a participant
+    const q = /* GraphQL */ `
+      query CheckParticipant($conversationId: String!, $userId: String!) {
+        conversationParticipantsByConversationIdAndUserId(conversationId: $conversationId, userId: { eq: $userId }, limit: 1) {
+          items { id }
+        }
+      }
+    `;
+    const check = await signAndRequest({ query: q, variables: { conversationId, userId: ASSISTANT_BOT_USER_ID }, opName: 'checkParticipant', jwt });
+    if (check?.data?.conversationParticipantsByConversationIdAndUserId?.items?.length) {
+      return; // Already a participant
+    }
+    
+    // Add assistant-bot as a participant
+    const m = /* GraphQL */ `
+      mutation CreateParticipant($input: CreateConversationParticipantInput!) {
+        createConversationParticipant(input: $input) { id }
+      }
+    `;
+    const nowIso = new Date().toISOString();
+    const input = {
+      conversationId,
+      userId: ASSISTANT_BOT_USER_ID,
+      joinedAt: nowIso,
+      role: 'MEMBER'
+    };
+    await signAndRequest({ query: m, variables: { input }, opName: 'createConversationParticipant', jwt });
+    console.log('[assistant] Added assistant-bot as conversation participant');
+  } catch (e) {
+    console.warn('[assistant] Failed to ensure participant (non-fatal):', e?.message || e);
+  }
+}
+
 async function createAssistantMessage(conversationId, content, jwt, metadataObj, attachmentsArr, type = 'TEXT') {
+  // Ensure assistant-bot is a participant first
+  await ensureAssistantParticipant(conversationId, jwt);
+  
   const m = /* GraphQL */ `
     mutation CreateMessage($input: CreateMessageInput!) {
       createMessage(input: $input) { id conversationId content senderId messageType attachments metadata createdAt updatedAt }
@@ -226,6 +264,28 @@ function extractDecisionsFromRecent(recent, currentUserId) {
     }
     return hits;
   } catch { return []; }
+}
+
+function detectPriority(text) {
+  try {
+    const t = String(text || '').trim();
+    if (!t) return 'normal';
+    
+    // Keyword-based urgency detection
+    const urgentKeywords = /\b(urgent|asap|critical|emergency|important|high priority|time sensitive|immediately|now|quick|rush)\b/i;
+    const hasKeyword = urgentKeywords.test(t);
+    
+    if (hasKeyword) {
+      return 'high';
+    }
+    
+    // Future: AI semantic detection would go here when called via OpenAI
+    // The model can override this by returning priority in its JSON response
+    
+    return 'normal';
+  } catch {
+    return 'normal';
+  }
 }
 
 function logMetric(name, value = 1, dims) {
@@ -702,6 +762,7 @@ exports.handler = async (event) => {
     const ASSISTANT_DECISIONS_ENABLED = getEnvBool('ASSISTANT_DECISIONS_ENABLED', false);
     const ASSISTANT_CONFLICTS_ENABLED = getEnvBool('ASSISTANT_CONFLICTS_ENABLED', false);
     const ASSISTANT_CALENDAR_CONFLICTS_ENABLED = getEnvBool('ASSISTANT_CALENDAR_CONFLICTS_ENABLED', false);
+    const ASSISTANT_PRIORITY_ENABLED = getEnvBool('ASSISTANT_PRIORITY_ENABLED', false);
     const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini');
     
     // Validate and sanitize calendar events
@@ -1260,12 +1321,16 @@ exports.handler = async (event) => {
           openaiAttempted = true;
           const prefs = await loadLatestPreferences(conversationId, jwt);
           const convo = (recent || []).slice(0, 10).map(m => ({ role: (m.senderId === userId ? 'user' : (m.senderId === ASSISTANT_BOT_USER_ID ? 'assistant' : 'user')), content: String(m.content || '').slice(0, 500) }));
+          // Detect priority from user message
+          const detectedPriority = ASSISTANT_PRIORITY_ENABLED ? detectPriority(text) : 'normal';
+          
           const sys = {
             role: 'system',
             content: [
               'You are a concise planning assistant. Output ONLY compact JSON with keys: text (string), optional events (array of { title, startISO, endISO, notes? }).',
               'Use user preferences if present. Keep under 120 words. Do not include markdown. Times must be ISO8601.',
               ASSISTANT_CALENDAR_CONFLICTS_ENABLED && validatedCalendarEvents.length ? 'Avoid suggesting times that overlap with the user\'s existing calendar slots.' : '',
+              ASSISTANT_PRIORITY_ENABLED ? 'If the user message indicates urgency (urgent, asap, critical, emergency), include "priority": "high" in your JSON response.' : '',
             ].filter(Boolean).join(' '),
           };
           // Build calendar context for OpenAI
@@ -1304,6 +1369,17 @@ exports.handler = async (event) => {
                 } catch {}
               }
               let content = `${ASSISTANT_REPLY_PREFIX} ${modelText}`.trim();
+              
+              // Extract priority (from model or fallback to detected)
+              let finalPriority = 'normal';
+              if (ASSISTANT_PRIORITY_ENABLED) {
+                finalPriority = validated.priority === 'high' ? 'high' : detectedPriority;
+                if (finalPriority === 'high') {
+                  try { logMetric('priority_detected', 1); } catch {}
+                  console.log('[priority] High priority detected');
+                }
+              }
+              
               // Optional: decision extraction on assistant replies
               let decisionsMeta = decisionsMetaGlobal;
               let decisionsAttach = decisionsAttachGlobal;
@@ -1381,8 +1457,9 @@ exports.handler = async (event) => {
                 const metadata = (() => {
                   const base = events.length ? { events } : {};
                   const withDecisions = decisionsMeta ? { ...base, ...decisionsMeta } : base;
-                  if (conflictsMeta) return { ...withDecisions, ...conflictsMeta };
-                  return Object.keys(withDecisions).length ? withDecisions : undefined;
+                  const withPriority = (ASSISTANT_PRIORITY_ENABLED && finalPriority === 'high') ? { ...withDecisions, priority: finalPriority } : withDecisions;
+                  if (conflictsMeta) return { ...withPriority, ...conflictsMeta };
+                  return Object.keys(withPriority).length ? withPriority : undefined;
                 })();
                 const posted = await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
                 console.log('[assistant] reply (openai) posted id:', posted?.id || '(none)');
@@ -1446,6 +1523,13 @@ exports.handler = async (event) => {
     ];
 
     try {
+      // Detect priority for fallback
+      const detectedPriority = ASSISTANT_PRIORITY_ENABLED ? detectPriority(text) : 'normal';
+      if (ASSISTANT_PRIORITY_ENABLED && detectedPriority === 'high') {
+        console.log('[priority] High priority detected (fallback)');
+        try { logMetric('priority_detected_fallback', 1); } catch {}
+      }
+      
       // Build attachments/metadata for events and optional decisions/conflicts
       const encEvents = (() => { try { return 'events:' + JSON.stringify({ events }); } catch { return undefined; } })();
       const decisionsMeta = decisionsMetaGlobal;
@@ -1511,8 +1595,9 @@ exports.handler = async (event) => {
       const metadata = (() => {
         const base = { events };
         const withDecisions = decisionsMeta ? { ...base, ...decisionsMeta } : base;
-        if (conflictsMeta) return { ...withDecisions, ...conflictsMeta };
-        return withDecisions;
+        const withPriority = (ASSISTANT_PRIORITY_ENABLED && detectedPriority === 'high') ? { ...withDecisions, priority: detectedPriority } : withDecisions;
+        if (conflictsMeta) return { ...withPriority, ...conflictsMeta };
+        return withPriority;
       })();
       const posted = await createAssistantMessage(conversationId, content, jwt, metadata, attachments.length ? attachments : undefined, 'TEXT');
       console.log('[assistant] reply posted id:', posted?.id || '(none)');

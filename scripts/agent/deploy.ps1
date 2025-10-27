@@ -10,6 +10,7 @@ Param(
   [Parameter(Mandatory=$false)][switch]$EnableDecisions,
   [Parameter(Mandatory=$false)][switch]$EnableConflicts,
   [Parameter(Mandatory=$false)][switch]$EnableCalendarConflicts,
+  [Parameter(Mandatory=$false)][switch]$EnablePriority,
   [Parameter(Mandatory=$false)][string]$ApiId,
   [Parameter(Mandatory=$false)][string]$OpenAIModel = 'gpt-4o-mini',
   [Parameter(Mandatory=$false)][switch]$DebugLogs
@@ -43,6 +44,7 @@ $flagRecipes = if ($EnableRecipes) { 'true' } else { 'false' }
 $flagDecisions = if ($EnableDecisions) { 'true' } else { 'false' }
 $flagConflicts = if ($EnableConflicts) { 'true' } else { 'false' }
 $flagCalendarConflicts = if ($EnableCalendarConflicts) { 'true' } else { 'false' }
+$flagPriority = if ($EnablePriority) { 'true' } else { 'false' }
 $envVarsHash = @{
   APPSYNC_ENDPOINT = $AppSyncEndpoint
   ASSISTANT_BOT_USER_ID = 'assistant-bot'
@@ -52,6 +54,7 @@ $envVarsHash = @{
   ASSISTANT_DECISIONS_ENABLED = $flagDecisions
   ASSISTANT_CONFLICTS_ENABLED = $flagConflicts
   ASSISTANT_CALENDAR_CONFLICTS_ENABLED = $flagCalendarConflicts
+  ASSISTANT_PRIORITY_ENABLED = $flagPriority
   OPENAI_MODEL = $OpenAIModel
 }
 if ($DebugLogs) { $envVarsHash['DEBUG_LOGS'] = 'true' }
