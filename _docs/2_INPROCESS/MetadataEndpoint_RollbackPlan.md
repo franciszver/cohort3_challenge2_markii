@@ -62,13 +62,13 @@ if (m?.senderId === 'assistant-bot') {
 ```powershell
 cd scripts/agent
 node ../../scripts/push-schema.js  # If schema was touched
-$env:AWS_PROFILE='ciscodg@gmail'
-.\deploy.ps1 -Profile 'ciscodg@gmail' -Region us-east-1 `
-    -AppSyncApiId ke2mzdeb7bgolo7gf7bjyfxa5i `
-    -AppSyncEndpoint "https://ke2mzdeb7bgolo7gf7bjyfxa5i.appsync-api.us-east-1.amazonaws.com/graphql" `
+$env:AWS_PROFILE='<your-aws-profile>'
+.\deploy.ps1 -Profile '<your-aws-profile>' -Region us-east-1 `
+    -AppSyncApiId <your-appsync-api-id> `
+    -AppSyncEndpoint "https://<your-appsync-api-id>.appsync-api.us-east-1.amazonaws.com/graphql" `
     -EnableOpenAI -EnableDecisions -EnableConflicts -EnablePriority `
-    -OpenAISecretArn 'arn:aws:secretsmanager:us-east-1:971422717446:secret:openai/assistant-UCI9C9' `
-    -ApiId vp6vbtipoi
+    -OpenAISecretArn 'arn:aws:secretsmanager:us-east-1:<account-id>:secret:<secret-name>' `
+    -ApiId <your-api-gateway-id>
 ```
 
 #### Step 4: Rebuild Mobile
