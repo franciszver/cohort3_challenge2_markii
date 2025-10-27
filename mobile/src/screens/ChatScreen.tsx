@@ -1278,6 +1278,45 @@ const [showCalendarPrompt, setShowCalendarPrompt] = useState(false);
                                                     </View>
                                                 );
                                             })()}
+							{/* Recipes CTA button */}
+							{(() => {
+								try {
+									const { ASSISTANT_RECIPE_ENABLED } = getFlags();
+									if (!ASSISTANT_RECIPE_ENABLED || item.senderId !== 'assistant-bot') return null;
+									
+									const meta = (() => { 
+										try { 
+											return typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); 
+										} catch { 
+											return {}; 
+										} 
+									})();
+									
+									if (!Array.isArray(meta?.recipes) || !meta.recipes.length) return null;
+									
+									return (
+										<TouchableOpacity
+											style={{ 
+												marginTop: 8, 
+												paddingVertical: 6, 
+												paddingHorizontal: 12, 
+												backgroundColor: theme.colors.primary, 
+												borderRadius: 8 
+											}}
+											onPress={() => {
+												setRecipesItems(meta.recipes);
+												setRecipesVisible(true);
+											}}
+										>
+											<Text style={{ color: '#fff', fontWeight: '600', textAlign: 'center' }}>
+												View Recipes ({meta.recipes.length})
+											</Text>
+										</TouchableOpacity>
+									);
+								} catch {
+									return null;
+								}
+							})()}
 							</View>
 								</TouchableOpacity>
 							)}

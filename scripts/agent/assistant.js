@@ -653,34 +653,56 @@ function detectDinnerIntent(s) {
   return /(what\s*'s|whats)\s+for\s+dinner|\bdinner\b|\bmake\s+a\s+recipe\b|\brecipe\b/.test(t);
 }
 
-async function fetchRecipes({ prefs, hint, budgetMs = 3500 }) {
+async function fetchRecipes({ prefs, keywords = [], budgetMs = 3500 }) {
   const started = Date.now();
   async function timeLeft() { return Math.max(0, budgetMs - (Date.now() - started)); }
   try {
-    // Strategy: vegetarian category if pref set; else try ingredient filter from hint token; else default to chicken
     let list = [];
+    // Strategy 1: vegetarian category if pref set
     try {
       if (prefs && (prefs.vegetarian === true || String(prefs.vegetarian).toLowerCase() === 'true')) {
         const res = await httpGetJson({ host: 'www.themealdb.com', path: '/api/json/v1/1/filter.php?c=Vegetarian', timeoutMs: await timeLeft() });
         list = Array.isArray(res?.meals) ? res.meals.slice(0, 6) : [];
       }
     } catch {}
-    if (!list.length) {
-      let ing = '';
+    
+    // Strategy 2: multi-keyword ingredient search
+    if (!list.length && keywords.length) {
+      // Try comma-separated keywords first
       try {
-        const m = /(with|using)\s+([a-zA-Z]+)/.exec(String(hint||''));
-        if (m && m[2]) ing = m[2].toLowerCase();
+        const combined = keywords.join(',');
+        const res = await httpGetJson({ host: 'www.themealdb.com', path: `/api/json/v1/1/filter.php?i=${encodeURIComponent(combined)}`, timeoutMs: await timeLeft() });
+        list = Array.isArray(res?.meals) ? res.meals.slice(0, 6) : [];
       } catch {}
-      if (!ing) {
-        const m2 = /ingredient\s*[:=]\s*([a-zA-Z]+)/.exec(String(hint||''));
-        if (m2 && m2[1]) ing = m2[1].toLowerCase();
+      
+      // Fallback: try each keyword separately and merge
+      if (!list.length) {
+        const seen = new Set();
+        for (const kw of keywords) {
+          if (await timeLeft() < 500) break;
+          try {
+            const res = await httpGetJson({ host: 'www.themealdb.com', path: `/api/json/v1/1/filter.php?i=${encodeURIComponent(kw)}`, timeoutMs: await timeLeft() });
+            const meals = Array.isArray(res?.meals) ? res.meals : [];
+            for (const m of meals) {
+              if (!seen.has(m.idMeal)) {
+                seen.add(m.idMeal);
+                list.push(m);
+              }
+            }
+          } catch {}
+        }
+        list = list.slice(0, 6);
       }
-      if (!ing) ing = 'chicken';
+    }
+    
+    // Fallback: default to chicken if no results
+    if (!list.length) {
       try {
-        const res2 = await httpGetJson({ host: 'www.themealdb.com', path: `/api/json/v1/1/filter.php?i=${encodeURIComponent(ing)}` , timeoutMs: await timeLeft() });
-        list = Array.isArray(res2?.meals) ? res2.meals.slice(0, 6) : [];
+        const res = await httpGetJson({ host: 'www.themealdb.com', path: '/api/json/v1/1/filter.php?i=chicken', timeoutMs: await timeLeft() });
+        list = Array.isArray(res?.meals) ? res.meals.slice(0, 6) : [];
       } catch {}
     }
+    
     const take = list.slice(0, 3);
     const details = [];
     for (const m of take) {
@@ -1367,11 +1389,49 @@ exports.handler = async (event) => {
     const dinnerIntent = ASSISTANT_RECIPE_ENABLED && detectDinnerIntent(lastUserMessage || text || '');
     if (dinnerIntent) {
       try {
+        // Collect food preferences from decisions AND recent messages
+        const foodKeywords = new Set();
+        
+        // 1. Scan tagged decisions for food preferences
+        try {
+          const sys = await getRecentSystemMessages(conversationId, jwt, 200);
+          for (const m of sys) {
+            const meta = toObjectJson(m?.metadata);
+            if (Array.isArray(meta?.decisions)) {
+              for (const d of meta.decisions) {
+                if (d.type === 'food_preference' && d.keyword) {
+                  foodKeywords.add(d.keyword.toLowerCase());
+                }
+              }
+            }
+          }
+        } catch {}
+        
+        // 2. Scan recent messages for untagged preferences
+        const foodPatterns = [
+          /\b(?:i|we)\s+want\s+([a-z]+)\b/gi,
+          /\blet'?s\s+have\s+([a-z]+)\b/gi,
+          /\bhow\s+about\s+([a-z]+)\b/gi,
+          /\b(?:prefer|like|love)\s+([a-z]+)\b/gi,
+        ];
+        for (const msg of recent || []) {
+          const txt = String(msg?.content || '');
+          for (const pattern of foodPatterns) {
+            let match;
+            while ((match = pattern.exec(txt)) !== null) {
+              if (match[1]) foodKeywords.add(match[1].toLowerCase());
+            }
+          }
+        }
+        
+        const keywords = Array.from(foodKeywords);
         const prefs = await loadLatestPreferences(conversationId, jwt);
-        const recs = await fetchRecipes({ prefs, hint: lastUserMessage || text || '', budgetMs: 3500 });
+        const recs = await fetchRecipes({ prefs, keywords, budgetMs: 3500 });
+        
         if (Array.isArray(recs) && recs.length) {
-          const summary = recs.map(r => `• ${r.title}`).join('\n');
-          const content = `${ASSISTANT_REPLY_PREFIX} Here are a few quick dinner ideas:\n${summary}`;
+          const prefsSummary = keywords.length ? `Based on preferences (${keywords.join(', ')}), here are some suggestions:` : 'Here are some dinner ideas:';
+          const recTitles = recs.map(r => `• ${r.title}`).join('\n');
+          const content = `${ASSISTANT_REPLY_PREFIX} ${prefsSummary}\n${recTitles}`;
           const attachRecipes = (() => { try { return 'recipes:' + JSON.stringify({ recipes: recs }); } catch { return undefined; } })();
           const decisionsMeta = decisionsMetaGlobal;
           const decisionsAttach = decisionsAttachGlobal;
@@ -1409,6 +1469,38 @@ exports.handler = async (event) => {
         }
       }
     } catch {}
+
+    // Food preference auto-tagging with acknowledgment (Option A)
+    if (ASSISTANT_DECISIONS_ENABLED && ASSISTANT_RECIPE_ENABLED) {
+      try {
+        const foodPatterns = [
+          { regex: /\b(?:i|we)\s+want\s+([a-z]+)\b/i, type: 'want' },
+          { regex: /\blet'?s\s+have\s+([a-z]+)\b/i, type: 'have' },
+          { regex: /\bhow\s+about\s+([a-z]+)\b/i, type: 'suggest' },
+          { regex: /\b(?:prefer|like|love)\s+([a-z]+)\b/i, type: 'prefer' },
+        ];
+        for (const { regex, type } of foodPatterns) {
+          const match = regex.exec(text || '');
+          if (match && match[1]) {
+            const food = match[1].toLowerCase();
+            const decision = {
+              title: `Preference: ${food}`,
+              summary: String(text || '').slice(0, 200),
+              participants: [userId],
+              decidedAtISO: new Date().toISOString(),
+              type: 'food_preference',
+              keyword: food,
+            };
+            const payloadStr = (() => { try { return JSON.stringify({ decisions: [decision] }); } catch { return '{}'; } })();
+            await createSystemMetadataMessage(conversationId, jwt, { decisions: [decision] }, '[assistant:decisions] decisions:' + payloadStr, ['decisions:' + payloadStr]);
+            const ack = `${ASSISTANT_REPLY_PREFIX} Got it! ${food} preference noted.`;
+            await createAssistantMessage(conversationId, ack, jwt, { decisions: [decision] }, ['decisions:' + payloadStr], 'TEXT');
+            try { logMetric('food_preference_tagged', 1); } catch {}
+            return respond(isHttp, 200, { ok: true });
+          }
+        }
+      } catch {}
+    }
 
     // Attempt Phase 1 (OpenAI) if enabled and key available
     let openaiAttempted = false;
